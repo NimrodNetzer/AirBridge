@@ -7,7 +7,7 @@
 
     <IsPackable>false</IsPackable>
     <IsTestProject>true</IsTestProject>
-    <!-- Required because AirBridge.Mirror references Windows 10 WinRT APIs -->
+    <!-- Required because AirBridge.Mirror uses Windows 10 WinRT APIs -->
     <RuntimeIdentifiers>win-x64;win-x86;win-arm64</RuntimeIdentifiers>
   </PropertyGroup>
 
@@ -20,8 +20,6 @@
     <PackageReference Include="xunit" Version="2.5.3" />
     <PackageReference Include="xunit.runner.visualstudio" Version="2.5.3" />
     <PackageReference Include="System.IO.Pipelines" Version="8.0.0" />
-    <!-- Required because AirBridge.Mirror uses WinUI 3 (MirrorWindow, MirrorDecoder) -->
-    <PackageReference Include="Microsoft.WindowsAppSDK" Version="1.5.240802000" />
   </ItemGroup>
 
   <ItemGroup>

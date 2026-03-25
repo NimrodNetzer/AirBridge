@@ -5,19 +5,19 @@
     <ProjectReference Include="..\AirBridge.Transport\AirBridge.Transport.csproj" />
   </ItemGroup>
 
-  <ItemGroup>
-    <!-- Windows App SDK: provides WinUI 3 (Microsoft.UI.Xaml) and WinRT media APIs -->
-    <PackageReference Include="Microsoft.WindowsAppSDK" Version="1.5.240802000" />
-  </ItemGroup>
-
   <PropertyGroup>
+    <!-- net8.0-windows gives access to Windows.Media.*, Windows.Graphics.* WinRT APIs natively -->
     <TargetFramework>net8.0-windows10.0.19041.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
-    <!-- Required so WinRT types (Windows.Media.*, Windows.Graphics.*) resolve -->
     <RuntimeIdentifiers>win-x64;win-x86;win-arm64</RuntimeIdentifiers>
-    <!-- Enables XAML pages in a class library (not strictly needed for code-behind-only window) -->
-    <UseWinUI>true</UseWinUI>
   </PropertyGroup>
+
+  <ItemGroup>
+    <!-- MirrorWindow.cs requires WinUI 3 (Microsoft.UI.Xaml) and belongs in AirBridge.App.
+         Excluded here so the Mirror module compiles without Windows App SDK tooling.
+         Will be re-integrated in Iteration 7 when AirBridge.App is created. -->
+    <Compile Remove="MirrorWindow.cs" />
+  </ItemGroup>
 
 </Project>
