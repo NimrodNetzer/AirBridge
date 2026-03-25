@@ -9,16 +9,17 @@ namespace AirBridge.Mirror;
 /// <para>
 /// Responsibilities:
 /// <list type="bullet">
-///   <item>Receives <see cref="MessageType.MirrorStart"/> from the Android device and
+///   <item>Sends <see cref="MessageType.MirrorStart"/> to the Android device and
 ///         opens a floating window via the injected <see cref="IMirrorWindowHost"/>.</item>
 ///   <item>Feeds <see cref="MessageType.MirrorFrame"/> payloads to the
 ///         <see cref="IMirrorDecoder"/> and presents them in the window.</item>
 ///   <item>On <see cref="MessageType.MirrorStop"/>, closes the window and stops.</item>
+///   <item>Captures pointer/keyboard events from the window and relays them to
+///         Android as <see cref="InputEventMessage"/> (0x30) messages.</item>
 ///   <item>When files are dropped onto the window, calls <see cref="SendFileAsync"/>
 ///         which delegates to the injected <see cref="ITransferEngine"/>.</item>
-///   <item>Passes through any <see cref="MessageType.FileTransferStart"/> /
-///         <c>FileChunk</c> / <c>FileTransferEnd</c> messages to the Android
-///         transfer receiver rather than consuming them.</item>
+///   <item>Passes through <see cref="MessageType.FileTransferAck"/> /
+///         <c>FileTransferEnd</c> messages received from Android.</item>
 /// </list>
 /// </para>
 /// </summary>
@@ -26,19 +27,29 @@ public sealed class MirrorSession : IMirrorSession
 {
     // ── Dependencies ───────────────────────────────────────────────────────
 
-    private readonly IMessageChannel             _channel;
-    private readonly Func<IMirrorDecoder>?        _decoderFactory;
+    private readonly IMessageChannel                          _channel;
+    private readonly Func<IMirrorDecoder>?                    _decoderFactory;
     private readonly Func<IMirrorDecoder, IMirrorWindowHost>? _windowFactory;
-    private readonly ITransferEngine?             _transferEngine;
-    private readonly IProgress<long>?             _transferProgress;
+    private readonly ITransferEngine?                         _transferEngine;
+    private readonly IProgress<long>?                         _transferProgress;
 
     // ── Runtime state ──────────────────────────────────────────────────────
 
-    private MirrorState                          _state = MirrorState.Connecting;
-    private CancellationTokenSource?             _cts;
-    private IMirrorWindowHost?                   _window;
-    private IMirrorDecoder?                      _decoder;
-    private readonly object                      _stateLock = new();
+    private MirrorState         _state = MirrorState.Connecting;
+    private CancellationTokenSource? _cts;
+    private IMirrorWindowHost?  _window;
+    private IMirrorDecoder?     _decoder;
+    private readonly object     _stateLock = new();
+
+    // ── Input send queue ───────────────────────────────────────────────────
+    // Bounded channel so SendInputAsync is non-blocking and fire-and-forget safe.
+    private readonly System.Threading.Channels.Channel<InputEventArgs> _inputQueue =
+        System.Threading.Channels.Channel.CreateBounded<InputEventArgs>(
+            new System.Threading.Channels.BoundedChannelOptions(64)
+            {
+                FullMode     = System.Threading.Channels.BoundedChannelFullMode.DropOldest,
+                SingleReader = true
+            });
 
     // ── IMirrorSession ─────────────────────────────────────────────────────
 
@@ -68,26 +79,11 @@ public sealed class MirrorSession : IMirrorSession
     /// Creates a new <see cref="MirrorSession"/>.
     /// </summary>
     /// <param name="sessionId">Unique identifier for this session.</param>
-    /// <param name="channel">
-    ///   The transport channel to the paired Android device.
-    ///   Must already be connected.
-    /// </param>
-    /// <param name="decoderFactory">
-    ///   Factory that creates an <see cref="IMirrorDecoder"/> when the session starts.
-    ///   Pass <c>null</c> for headless/test mode (frames are discarded).
-    /// </param>
-    /// <param name="windowFactory">
-    ///   Factory that creates an <see cref="IMirrorWindowHost"/> given a decoder.
-    ///   Pass <c>null</c> for headless/test mode.
-    /// </param>
-    /// <param name="transferEngine">
-    ///   Engine used to send dropped files to the Android device.
-    ///   Pass <c>null</c> to disable drag-and-drop file transfer
-    ///   (drops will be silently ignored).
-    /// </param>
-    /// <param name="transferProgress">
-    ///   Optional progress reporter for file transfers; receives bytes-transferred counts.
-    /// </param>
+    /// <param name="channel">The transport channel to the paired Android device.</param>
+    /// <param name="decoderFactory">Factory for <see cref="IMirrorDecoder"/>; null = headless.</param>
+    /// <param name="windowFactory">Factory for <see cref="IMirrorWindowHost"/>; null = headless.</param>
+    /// <param name="transferEngine">Engine for drag-and-drop file transfer; null = disabled.</param>
+    /// <param name="transferProgress">Optional progress reporter (bytes transferred).</param>
     public MirrorSession(
         string sessionId,
         IMessageChannel channel,
@@ -96,12 +92,12 @@ public sealed class MirrorSession : IMirrorSession
         ITransferEngine? transferEngine = null,
         IProgress<long>? transferProgress = null)
     {
-        SessionId        = sessionId ?? throw new ArgumentNullException(nameof(sessionId));
-        _channel         = channel   ?? throw new ArgumentNullException(nameof(channel));
-        Mode             = MirrorMode.PhoneWindow;
-        _decoderFactory  = decoderFactory;
-        _windowFactory   = windowFactory;
-        _transferEngine  = transferEngine;
+        SessionId         = sessionId ?? throw new ArgumentNullException(nameof(sessionId));
+        _channel          = channel   ?? throw new ArgumentNullException(nameof(channel));
+        Mode              = MirrorMode.PhoneWindow;
+        _decoderFactory   = decoderFactory;
+        _windowFactory    = windowFactory;
+        _transferEngine   = transferEngine;
         _transferProgress = transferProgress;
     }
 
@@ -120,25 +116,34 @@ public sealed class MirrorSession : IMirrorSession
 
         try
         {
-            await HandleMirrorStartAsync(_cts.Token).ConfigureAwait(false);
+            // Run the message pump and input-send loop concurrently
+            var receiveTask   = HandleMirrorStartAsync(_cts.Token);
+            var inputSendTask = RunInputSendLoopAsync(_cts.Token);
+            await Task.WhenAll(receiveTask, inputSendTask).ConfigureAwait(false);
         }
         catch (OperationCanceledException)
         {
-            State = MirrorState.Stopped;
+            if (State is not MirrorState.Stopped and not MirrorState.Error)
+                State = MirrorState.Stopped;
         }
         catch
         {
             State = MirrorState.Error;
             throw;
         }
+        finally
+        {
+            _inputQueue.Writer.TryComplete();
+            CleanUp();
+        }
     }
 
     /// <inheritdoc/>
     public async Task StopAsync()
     {
+        _inputQueue.Writer.TryComplete();
         _cts?.Cancel();
 
-        // Notify the Android side that we are stopping
         try
         {
             await _channel.SendAsync(
@@ -147,31 +152,31 @@ public sealed class MirrorSession : IMirrorSession
         }
         catch
         {
-            // Best-effort; the channel may already be closed
+            // Best-effort; channel may already be closed
         }
 
         _window?.Close();
         State = MirrorState.Stopped;
     }
 
-    /// <inheritdoc/>
-    public async Task SendInputAsync(InputEventArgs inputEvent, CancellationToken cancellationToken = default)
+    /// <summary>
+    /// Enqueues an input event for forwarding to the connected Android device.
+    /// Non-blocking: if the queue is full the oldest pending event is dropped.
+    /// </summary>
+    public Task SendInputAsync(
+        InputEventArgs inputEvent,
+        CancellationToken cancellationToken = default)
     {
-        // Input relay is implemented in Iteration 6 (full mirror).
-        // For MVP the method exists to satisfy the interface but does nothing.
-        await Task.CompletedTask.ConfigureAwait(false);
+        if (inputEvent is null) return Task.CompletedTask;
+        _inputQueue.Writer.TryWrite(inputEvent);
+        return Task.CompletedTask;
     }
 
-    // ── Core receive loop ──────────────────────────────────────────────────
+    // ── Core receive / message pump ────────────────────────────────────────
 
-    /// <summary>
-    /// Sends a <see cref="MessageType.MirrorStart"/> request, waits for the Android
-    /// device to acknowledge, creates the floating window, and then pumps
-    /// incoming messages until the session is stopped.
-    /// </summary>
     private async Task HandleMirrorStartAsync(CancellationToken ct)
     {
-        // Send mirror-start request
+        // Announce the mirror session to Android
         await _channel.SendAsync(
             new ProtocolMessage(MessageType.MirrorStart, Array.Empty<byte>()), ct)
             .ConfigureAwait(false);
@@ -181,6 +186,10 @@ public sealed class MirrorSession : IMirrorSession
         {
             _decoder = _decoderFactory();
             _window  = _windowFactory(_decoder);
+
+            // Wire input relay: window raises events → enqueue for send loop
+            if (_window is MirrorWindow mw)
+                mw.InputEventRaised += (_, evt) => _inputQueue.Writer.TryWrite(evt);
 
             // Wire drag-and-drop callback
             _window.OnFilesDropped = async files =>
@@ -212,16 +221,11 @@ public sealed class MirrorSession : IMirrorSession
                     State = MirrorState.Stopped;
                     return;
 
-                // File-transfer messages are forwarded: the Android side initiates
-                // a receive session when the Windows side sends files.
-                // These message types arrive as ACKs from the Android receiver.
+                // ACKs from the Android transfer receiver — forwarded, not consumed here
                 case MessageType.FileTransferAck:
                 case MessageType.FileTransferEnd:
-                    // Handled by the active TransferSession; we do not consume them here.
                     break;
 
-                // All other message types are ignored to keep the mirror session
-                // forward-compatible as the protocol evolves.
                 default:
                     break;
             }
@@ -231,48 +235,70 @@ public sealed class MirrorSession : IMirrorSession
         State = MirrorState.Stopped;
     }
 
+    // ── Input send loop ────────────────────────────────────────────────────
+
+    private async Task RunInputSendLoopAsync(CancellationToken ct)
+    {
+        await foreach (var evt in _inputQueue.Reader.ReadAllAsync(ct).ConfigureAwait(false))
+        {
+            var kind = evt.Type switch
+            {
+                InputEventType.Touch => InputEventKind.Touch,
+                InputEventType.Key   => InputEventKind.Key,
+                _                    => InputEventKind.Mouse
+            };
+
+            var msg = new InputEventMessage(
+                SessionId:   SessionId,
+                EventKind:   kind,
+                NormalizedX: evt.NormalizedX,
+                NormalizedY: evt.NormalizedY,
+                Keycode:     evt.Keycode,
+                MetaState:   evt.MetaState);
+
+            try
+            {
+                await _channel.SendAsync(
+                    new ProtocolMessage(MessageType.InputEvent, msg.ToBytes()), ct)
+                    .ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) { break; }
+            catch { /* Best-effort: drop the event if the channel is gone */ }
+        }
+    }
+
     // ── File transfer ──────────────────────────────────────────────────────
 
     /// <summary>
     /// Sends a dropped file to the connected Android device using the injected
-    /// <see cref="ITransferEngine"/>.
-    /// <para>
-    /// If no transfer engine was injected the call is a silent no-op — this
-    /// allows headless and test instantiation without file-transfer capability.
-    /// </para>
+    /// <see cref="ITransferEngine"/>. No-op when no engine is injected.
     /// </summary>
-    /// <param name="file">The file to send.</param>
-    /// <param name="ct">Token that cancels the transfer in progress.</param>
     public async Task SendFileAsync(IDroppedFile file, CancellationToken ct)
     {
         if (_transferEngine is null) return;
 
-        // The transfer protocol operates over a raw Stream.  We expose the
-        // channel's underlying stream by routing through a MemoryStream bridge
-        // and then sending it as a series of ProtocolMessage payloads.
-        // For simplicity in this MVP, the transfer bytes are sent directly over
-        // the channel stream via a NetworkStreamAdapter so that the Android
-        // TransferSession receiver loop can consume them.
         await using var adapter = new ChannelNetworkStreamAdapter(_channel, ct);
-
         var result = await _transferEngine.SendFileAsync(
-            file.Path,
-            adapter,
-            _transferProgress,
-            ct).ConfigureAwait(false);
-
-        // Result is informational; the session continues even if a transfer fails.
-        // In a future iteration, progress/error could be surfaced to the UI.
+            file.Path, adapter, _transferProgress, ct).ConfigureAwait(false);
         _ = result;
     }
 
-    // ── IDisposable ────────────────────────────────────────────────────────
+    // ── Cleanup ────────────────────────────────────────────────────────────
+
+    private void CleanUp()
+    {
+        try { _window?.Close(); }   catch { }
+        try { _decoder?.Dispose(); } catch { }
+        _decoder = null;
+        _window  = null;
+    }
 
     /// <inheritdoc/>
     public void Dispose()
     {
+        _inputQueue.Writer.TryComplete();
         _cts?.Cancel();
         _cts?.Dispose();
-        _decoder?.Dispose();
+        CleanUp();
     }
 }
