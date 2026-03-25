@@ -181,7 +181,7 @@ AirBridge/
 - **Commit style:** conventional commits (`feat:`, `fix:`, `chore:`, `docs:`, `test:`)
 - **Breaking changes:** must be flagged in PR title and CHANGELOG
 - **Merge flow:** `feature/*` → `dev` (PR + CI green) → `main` (milestone releases only)
-- **Commits & pushes:** only the project owner commits and pushes. Claude prepares changes and suggests commit messages but never commits or pushes autonomously.
+- **Commits & pushes:** agents commit locally and push to their feature branch. Commit messages must not include any Claude/AI attribution lines.
 
 ---
 
