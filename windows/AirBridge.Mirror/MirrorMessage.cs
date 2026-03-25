@@ -1,19 +1,20 @@
 using System.Buffers.Binary;
 using System.Text;
+using AirBridge.Transport.Protocol;
 
 namespace AirBridge.Mirror;
 
 /// <summary>
 /// Message type tags for the screen-mirror sub-protocol.
-/// These align with the values in <c>AirBridge.Transport.Protocol.MessageType</c>:
+/// Values align with <see cref="MessageType"/>:
 /// <c>MirrorStart = 0x20</c>, <c>MirrorFrame = 0x21</c>, <c>MirrorStop = 0x22</c>.
 /// </summary>
 public enum MirrorMessageType : byte
 {
-    /// <summary>Android → Windows: announces a new mirror session with stream parameters.</summary>
+    /// <summary>Initiator → Receiver: announces a new mirror session.</summary>
     MirrorStart = 0x20,
 
-    /// <summary>Android → Windows: one encoded H.264/H.265 NAL frame.</summary>
+    /// <summary>Source → Sink: one H.264 NAL unit (or AVCC-framed chunk).</summary>
     MirrorFrame = 0x21,
 
     /// <summary>Either direction: graceful teardown of a mirror session.</summary>
@@ -24,148 +25,145 @@ public enum MirrorMessageType : byte
 }
 
 /// <summary>
-/// Wire-format message sent by Android to start a mirror session.
-/// <para>Binary layout (big-endian):</para>
-/// <code>
-/// [1 byte ] type = 0x20
-/// [4 bytes] session-id length (N)
-/// [N bytes] session-id (UTF-8)
-/// [4 bytes] width  (int32, pixels)
-/// [4 bytes] height (int32, pixels)
-/// [4 bytes] fps    (int32)
-/// [4 bytes] codec string length (M)
-/// [M bytes] codec  (UTF-8, e.g. "H264")
-/// </code>
+/// Codec negotiated in <see cref="MirrorStartMessage"/>.
 /// </summary>
-public sealed record MirrorStartMessage(
-    string SessionId,
-    int Width,
-    int Height,
-    int Fps,
-    string Codec)
+public enum MirrorCodec : byte
 {
-    /// <summary>Serializes the message to bytes.</summary>
-    public byte[] ToBytes()
-    {
-        var sidBytes   = Encoding.UTF8.GetBytes(SessionId);
-        var codecBytes = Encoding.UTF8.GetBytes(Codec);
-        // 1 (type) + 4 (sid len) + N + 4 (width) + 4 (height) + 4 (fps) + 4 (codec len) + M
-        var buf = new byte[1 + 4 + sidBytes.Length + 4 + 4 + 4 + 4 + codecBytes.Length];
-        int pos = 0;
-        buf[pos++] = (byte)MirrorMessageType.MirrorStart;
-        BinaryPrimitives.WriteInt32BigEndian(buf.AsSpan(pos, 4), sidBytes.Length);   pos += 4;
-        sidBytes.CopyTo(buf, pos);                                                    pos += sidBytes.Length;
-        BinaryPrimitives.WriteInt32BigEndian(buf.AsSpan(pos, 4), Width);              pos += 4;
-        BinaryPrimitives.WriteInt32BigEndian(buf.AsSpan(pos, 4), Height);             pos += 4;
-        BinaryPrimitives.WriteInt32BigEndian(buf.AsSpan(pos, 4), Fps);                pos += 4;
-        BinaryPrimitives.WriteInt32BigEndian(buf.AsSpan(pos, 4), codecBytes.Length);  pos += 4;
-        codecBytes.CopyTo(buf, pos);
-        return buf;
-    }
-
-    /// <summary>
-    /// Deserializes a <see cref="MirrorStartMessage"/> from <paramref name="data"/>
-    /// (including the type byte at index 0).
-    /// </summary>
-    public static MirrorStartMessage FromBytes(ReadOnlySpan<byte> data)
-    {
-        int pos      = 1; // skip type byte
-        int sidLen   = BinaryPrimitives.ReadInt32BigEndian(data.Slice(pos, 4)); pos += 4;
-        var sessionId = Encoding.UTF8.GetString(data.Slice(pos, sidLen));       pos += sidLen;
-        int width    = BinaryPrimitives.ReadInt32BigEndian(data.Slice(pos, 4)); pos += 4;
-        int height   = BinaryPrimitives.ReadInt32BigEndian(data.Slice(pos, 4)); pos += 4;
-        int fps      = BinaryPrimitives.ReadInt32BigEndian(data.Slice(pos, 4)); pos += 4;
-        int codecLen = BinaryPrimitives.ReadInt32BigEndian(data.Slice(pos, 4)); pos += 4;
-        var codec    = Encoding.UTF8.GetString(data.Slice(pos, codecLen));
-        return new MirrorStartMessage(sessionId, width, height, fps, codec);
-    }
+    H264 = 0x01,
+    H265 = 0x02,
 }
 
 /// <summary>
-/// Wire-format message carrying one encoded H.264/H.265 NAL buffer.
+/// Mirror mode carried in <see cref="MirrorStartMessage"/> so the receiver
+/// knows whether it is the sink (TabletDisplay) or the source (PhoneWindow).
+/// </summary>
+public enum MirrorSessionMode : byte
+{
+    /// <summary>Android is the source; Windows renders a floating window.</summary>
+    PhoneWindow    = 0x01,
+
+    /// <summary>Windows is the source (IddCx virtual display); Android renders full-screen.</summary>
+    TabletDisplay  = 0x02,
+}
+
+// ── MirrorStartMessage ─────────────────────────────────────────────────────
+
+/// <summary>
+/// Wire-format message that opens a mirror session.
 /// <para>Binary layout (big-endian):</para>
 /// <code>
-/// [1 byte ] type = 0x21
+/// [1 byte ] type = 0x20
+/// [1 byte ] mode (MirrorSessionMode)
+/// [1 byte ] codec (MirrorCodec)
+/// [2 bytes] width (uint16)
+/// [2 bytes] height (uint16)
+/// [1 byte ] fps
 /// [4 bytes] session-id length (N)
 /// [N bytes] session-id (UTF-8)
-/// [8 bytes] timestamp-ms (int64, presentation time in milliseconds)
-/// [1 byte ] flags (bit 0 = keyframe)
-/// [4 bytes] payload length (P)
-/// [P bytes] H.264 NAL data
 /// </code>
 /// </summary>
-public sealed record MirrorFrameMessage(
-    string SessionId,
-    long TimestampMs,
-    bool IsKeyFrame,
-    byte[] NalData)
+public sealed record MirrorStartMessage(
+    MirrorSessionMode Mode,
+    MirrorCodec       Codec,
+    ushort            Width,
+    ushort            Height,
+    byte              Fps,
+    string            SessionId)
 {
     /// <summary>Serializes the message to bytes.</summary>
     public byte[] ToBytes()
     {
         var sidBytes = Encoding.UTF8.GetBytes(SessionId);
-        // 1 (type) + 4 (sid len) + N + 8 (ts) + 1 (flags) + 4 (nal len) + P
-        var buf = new byte[1 + 4 + sidBytes.Length + 8 + 1 + 4 + NalData.Length];
+        // 1+1+1+2+2+1+4+N
+        var buf = new byte[12 + sidBytes.Length];
+        int pos = 0;
+        buf[pos++] = (byte)MirrorMessageType.MirrorStart;
+        buf[pos++] = (byte)Mode;
+        buf[pos++] = (byte)Codec;
+        BinaryPrimitives.WriteUInt16BigEndian(buf.AsSpan(pos, 2), Width);  pos += 2;
+        BinaryPrimitives.WriteUInt16BigEndian(buf.AsSpan(pos, 2), Height); pos += 2;
+        buf[pos++] = Fps;
+        BinaryPrimitives.WriteInt32BigEndian(buf.AsSpan(pos, 4), sidBytes.Length); pos += 4;
+        sidBytes.CopyTo(buf, pos);
+        return buf;
+    }
+
+    /// <summary>Deserializes a <see cref="MirrorStartMessage"/> from <paramref name="data"/>.</summary>
+    public static MirrorStartMessage FromBytes(ReadOnlySpan<byte> data)
+    {
+        int pos = 1; // skip type byte
+        var mode   = (MirrorSessionMode)data[pos++];
+        var codec  = (MirrorCodec)data[pos++];
+        var width  = BinaryPrimitives.ReadUInt16BigEndian(data.Slice(pos, 2)); pos += 2;
+        var height = BinaryPrimitives.ReadUInt16BigEndian(data.Slice(pos, 2)); pos += 2;
+        byte fps   = data[pos++];
+        int sidLen = BinaryPrimitives.ReadInt32BigEndian(data.Slice(pos, 4)); pos += 4;
+        var sid    = Encoding.UTF8.GetString(data.Slice(pos, sidLen));
+        return new MirrorStartMessage(mode, codec, width, height, fps, sid);
+    }
+}
+
+// ── MirrorFrameMessage ──────────────────────────────────────────────────────
+
+/// <summary>
+/// Wire-format message carrying one H.264 NAL unit from source to sink.
+/// <para>Binary layout (big-endian):</para>
+/// <code>
+/// [1 byte ] type = 0x21
+/// [1 byte ] flags: bit 0 = isKeyFrame
+/// [8 bytes] presentation timestamp in microseconds (int64)
+/// [4 bytes] NAL data length (N)
+/// [N bytes] H.264 NAL data
+/// </code>
+/// </summary>
+public sealed record MirrorFrameMessage(
+    bool     IsKeyFrame,
+    long     PresentationTimestampUs,
+    byte[]   NalData)
+{
+    /// <summary>Serializes the message to bytes.</summary>
+    public byte[] ToBytes()
+    {
+        var buf = new byte[1 + 1 + 8 + 4 + NalData.Length];
         int pos = 0;
         buf[pos++] = (byte)MirrorMessageType.MirrorFrame;
-        BinaryPrimitives.WriteInt32BigEndian(buf.AsSpan(pos, 4), sidBytes.Length); pos += 4;
-        sidBytes.CopyTo(buf, pos);                                                  pos += sidBytes.Length;
-        BinaryPrimitives.WriteInt64BigEndian(buf.AsSpan(pos, 8), TimestampMs);      pos += 8;
-        buf[pos++] = IsKeyFrame ? (byte)0x01 : (byte)0x00;
-        BinaryPrimitives.WriteInt32BigEndian(buf.AsSpan(pos, 4), NalData.Length);   pos += 4;
+        buf[pos++] = (byte)(IsKeyFrame ? 0x01 : 0x00);
+        BinaryPrimitives.WriteInt64BigEndian(buf.AsSpan(pos, 8), PresentationTimestampUs); pos += 8;
+        BinaryPrimitives.WriteInt32BigEndian(buf.AsSpan(pos, 4), NalData.Length);          pos += 4;
         NalData.CopyTo(buf, pos);
         return buf;
     }
 
-    /// <summary>
-    /// Deserializes a <see cref="MirrorFrameMessage"/> from <paramref name="data"/>
-    /// (including the type byte at index 0).
-    /// </summary>
+    /// <summary>Deserializes a <see cref="MirrorFrameMessage"/> from <paramref name="data"/>.</summary>
     public static MirrorFrameMessage FromBytes(ReadOnlySpan<byte> data)
     {
-        int pos      = 1;
-        int sidLen   = BinaryPrimitives.ReadInt32BigEndian(data.Slice(pos, 4));  pos += 4;
-        var sessionId = Encoding.UTF8.GetString(data.Slice(pos, sidLen));         pos += sidLen;
-        long tsMs    = BinaryPrimitives.ReadInt64BigEndian(data.Slice(pos, 8));   pos += 8;
+        int pos       = 1; // skip type byte
         bool keyFrame = (data[pos++] & 0x01) != 0;
-        int nalLen   = BinaryPrimitives.ReadInt32BigEndian(data.Slice(pos, 4));   pos += 4;
-        var nalData  = data.Slice(pos, nalLen).ToArray();
-        return new MirrorFrameMessage(sessionId, tsMs, keyFrame, nalData);
+        long pts      = BinaryPrimitives.ReadInt64BigEndian(data.Slice(pos, 8)); pos += 8;
+        int nalLen    = BinaryPrimitives.ReadInt32BigEndian(data.Slice(pos, 4)); pos += 4;
+        var nal       = data.Slice(pos, nalLen).ToArray();
+        return new MirrorFrameMessage(keyFrame, pts, nal);
     }
 }
 
+// ── MirrorStopMessage ───────────────────────────────────────────────────────
+
 /// <summary>
-/// Wire-format message sent by either side to signal graceful mirror teardown.
-/// <para>Binary layout (big-endian):</para>
+/// Wire-format message that terminates a mirror session.
+/// <para>Binary layout:</para>
 /// <code>
-/// [1 byte ] type = 0x22
-/// [4 bytes] session-id length (N)
-/// [N bytes] session-id (UTF-8)
+/// [1 byte] type = 0x22
+/// [1 byte] reason code (0 = normal, 1 = error)
 /// </code>
 /// </summary>
-public sealed record MirrorStopMessage(string SessionId)
+public sealed record MirrorStopMessage(byte ReasonCode = 0)
 {
     /// <summary>Serializes the message to bytes.</summary>
-    public byte[] ToBytes()
-    {
-        var sidBytes = Encoding.UTF8.GetBytes(SessionId);
-        var buf = new byte[1 + 4 + sidBytes.Length];
-        buf[0] = (byte)MirrorMessageType.MirrorStop;
-        BinaryPrimitives.WriteInt32BigEndian(buf.AsSpan(1, 4), sidBytes.Length);
-        sidBytes.CopyTo(buf, 5);
-        return buf;
-    }
+    public byte[] ToBytes() => new[] { (byte)MirrorMessageType.MirrorStop, ReasonCode };
 
-    /// <summary>
-    /// Deserializes a <see cref="MirrorStopMessage"/> from <paramref name="data"/>
-    /// (including the type byte at index 0).
-    /// </summary>
+    /// <summary>Deserializes a <see cref="MirrorStopMessage"/> from <paramref name="data"/>.</summary>
     public static MirrorStopMessage FromBytes(ReadOnlySpan<byte> data)
-    {
-        int sidLen  = BinaryPrimitives.ReadInt32BigEndian(data.Slice(1, 4));
-        var sessionId = Encoding.UTF8.GetString(data.Slice(5, sidLen));
-        return new MirrorStopMessage(sessionId);
-    }
+        => new MirrorStopMessage(data.Length > 1 ? data[1] : (byte)0);
 }
 
 /// <summary>

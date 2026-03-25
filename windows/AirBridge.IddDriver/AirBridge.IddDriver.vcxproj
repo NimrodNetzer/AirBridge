@@ -1,0 +1,125 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  AirBridge.IddDriver.vcxproj
+  WDK UMDF2 project for the AirBridge Indirect Display Driver.
+
+  Prerequisites:
+    - Visual Studio 2022 with "Desktop development with C++" workload
+    - Windows Driver Kit (WDK) 10.0.22000+ installed alongside the matching
+      Windows SDK
+    - The WDK VS integration (WDK.vsix) must be installed so that the
+      "WindowsKernelModeDriver" / "WindowsUserModeDriver" project types resolve
+
+  Build configuration:
+    - Platform: x64 (UMDF2 drivers can also target ARM64)
+    - ConfigurationType: DynamicLibrary  (UMDF2 drivers are DLLs, not .sys files)
+    - DriverType: UMDF (set via WDK property sheets)
+    - TargetExt: .dll
+-->
+<Project DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+
+  <ItemGroup Label="ProjectConfigurations">
+    <ProjectConfiguration Include="Debug|x64">
+      <Configuration>Debug</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Release|x64">
+      <Configuration>Release</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+  </ItemGroup>
+
+  <PropertyGroup Label="Globals">
+    <ProjectGuid>{A1B2C3D4-E5F6-7890-ABCD-EF1234567890}</ProjectGuid>
+    <TemplateGuid>{A1B2C3D4-E5F6-7890-ABCD-EF1234567891}</TemplateGuid>
+    <TargetFramework>native</TargetFramework>
+    <MinimumVisualStudioVersion>17.0</MinimumVisualStudioVersion>
+    <Configuration Condition="'$(Configuration)'==''">Debug</Configuration>
+    <Platform Condition="'$(Platform)'==''">x64</Platform>
+    <ProjectName>AirBridge.IddDriver</ProjectName>
+    <!-- WDK driver type: UMDF2 (user-mode) -->
+    <DriverType>UMDF</DriverType>
+    <DriverTargetPlatform>Universal</DriverTargetPlatform>
+    <TargetOsVersion>10.0</TargetOsVersion>
+  </PropertyGroup>
+
+  <!-- Import WDK property sheets (these resolve when WDK is installed) -->
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
+
+  <PropertyGroup Label="Configuration">
+    <ConfigurationType>DynamicLibrary</ConfigurationType>
+    <UseDebugLibraries Condition="'$(Configuration)'=='Debug'">true</UseDebugLibraries>
+    <UseDebugLibraries Condition="'$(Configuration)'=='Release'">false</UseDebugLibraries>
+    <PlatformToolset>WindowsUserModeDriver10.0</PlatformToolset>
+    <TargetExt>.dll</TargetExt>
+    <CharacterSet>Unicode</CharacterSet>
+  </PropertyGroup>
+
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
+
+  <ImportGroup Label="PropertySheets">
+    <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props"
+            Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')"
+            Label="LocalAppDataPlatform" />
+  </ImportGroup>
+
+  <PropertyGroup Label="UserMacros" />
+
+  <!-- ── Compiler settings ─────────────────────────────────────────────── -->
+  <ItemDefinitionGroup>
+    <ClCompile>
+      <AdditionalIncludeDirectories>
+        $(WindowsSdkDir)Include\$(TargetPlatformVersion)\um;
+        $(WindowsSdkDir)Include\$(TargetPlatformVersion)\shared;
+        %(AdditionalIncludeDirectories)
+      </AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>
+        WIN32;_WINDOWS;UMDF_USING_NTSTATUS;%(PreprocessorDefinitions)
+      </PreprocessorDefinitions>
+      <WarningLevel>Level4</WarningLevel>
+      <TreatWarningAsError>false</TreatWarningAsError>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <RuntimeLibrary Condition="'$(Configuration)'=='Debug'">MultiThreadedDebugDLL</RuntimeLibrary>
+      <RuntimeLibrary Condition="'$(Configuration)'=='Release'">MultiThreadedDLL</RuntimeLibrary>
+    </ClCompile>
+
+    <!-- ── Linker settings ────────────────────────────────────────────── -->
+    <Link>
+      <AdditionalDependencies>
+        IddCx.lib;d3d11.lib;dxgi.lib;mf.lib;mfuuid.lib;mfplat.lib;
+        %(AdditionalDependencies)
+      </AdditionalDependencies>
+      <AdditionalLibraryDirectories>
+        $(WindowsSdkDir)Lib\$(TargetPlatformVersion)\um\x64;
+        %(AdditionalLibraryDirectories)
+      </AdditionalLibraryDirectories>
+      <SubSystem>Windows</SubSystem>
+      <GenerateDebugInformation>true</GenerateDebugInformation>
+      <ModuleDefinitionFile>AirBridge.IddDriver.def</ModuleDefinitionFile>
+    </Link>
+  </ItemDefinitionGroup>
+
+  <!-- ── Source files ─────────────────────────────────────────────────── -->
+  <ItemGroup>
+    <ClCompile Include="Driver.cpp" />
+    <ClCompile Include="Device.cpp" />
+    <ClCompile Include="SwapChainProcessor.cpp" />
+    <ClCompile Include="H264Encoder.cpp" />
+    <ClCompile Include="MonitorDescriptor.cpp" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ClInclude Include="Driver.h" />
+    <ClInclude Include="Device.h" />
+    <ClInclude Include="H264Encoder.h" />
+    <ClInclude Include="MonitorDescriptor.h" />
+  </ItemGroup>
+
+  <!-- INF file (not compiled; included for solution visibility) -->
+  <ItemGroup>
+    <None Include="AirBridge.IddDriver.inf" />
+  </ItemGroup>
+
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
+
+</Project>

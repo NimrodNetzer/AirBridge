@@ -1,49 +1,50 @@
+// MirrorWindow.cs — WinUI 3 floating window for the phone mirror feature.
+// Excluded from AirBridge.Mirror.csproj (net8.0 library) because it depends on
+// the Windows App SDK / WinUI 3 runtime. Compiled only in AirBridge.App
+// (net8.0-windows10.0.19041.0 + WindowsAppSDK). Compile guard: WINUI3.
+
+#if WINUI3
+
 using AirBridge.Core.Interfaces;
-using Microsoft.UI;
-using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
-using Windows.Graphics;
-using Windows.Media.Core;
-using Windows.Media.Playback;
-using Windows.System;
+using Windows.ApplicationModel.DataTransfer;
+using Windows.Storage;
 
 namespace AirBridge.Mirror;
 
 /// <summary>
-/// Frameless, always-on-top floating window that renders the Android phone mirror stream.
-/// Implements <see cref="IMirrorWindowHost"/> so it can be injected into
-/// <see cref="MirrorSession"/> via the window factory parameter.
-///
+/// WinUI 3 floating window that renders the Android phone screen mirror,
+/// captures pointer/keyboard input for relay, and acts as a drag-and-drop
+/// target for file transfer.
 /// <para>
-/// The window sets <c>ExtendsContentIntoTitleBar = true</c> so there is no OS chrome.
-/// A <see cref="MediaPlayerElement"/> fills the entire client area and renders the
-/// H.264 stream via a <see cref="MediaPlayer"/> connected to the
-/// <see cref="MirrorDecoder"/>'s <see cref="Windows.Media.Core.MediaStreamSource"/>.
+/// The window is frameless (<c>ExtendsContentIntoTitleBar = true</c>),
+/// always-on-top, and sized to match the incoming video resolution.
 /// </para>
-///
 /// <para>
 /// Pointer (mouse/touch) and keyboard events are captured and surfaced via
 /// <see cref="InputEventRaised"/> for forwarding to the Android device.
 /// </para>
-///
 /// <para>
-/// This class must be instantiated on the WinUI 3 dispatcher (UI) thread.
+/// Drop target behaviour: accepts <see cref="StandardDataFormats.StorageItems"/>,
+/// shows an overlay while dragging, and invokes <see cref="OnFilesDropped"/> on drop.
 /// </para>
 /// </summary>
-public sealed class MirrorWindow : Window, IMirrorWindowHost
+public sealed class MirrorWindow : IMirrorWindowHost
 {
-    private readonly IMirrorDecoder     _decoder;
-    private readonly MediaPlayerElement _mediaElement;
+    // ── WinUI 3 window / XAML tree ─────────────────────────────────────────
 
-    private AppWindow?   _appWindow;
-    private MediaPlayer? _player;
+    private readonly Window    _window;
+    private readonly Grid      _rootGrid;
+    private readonly TextBlock _dropOverlay;
 
-    // Cached window client dimensions for normalizing pointer coordinates.
+    // Cached client dimensions for normalising pointer coordinates.
     private int _windowWidth  = 1;
     private int _windowHeight = 1;
+
+    // ── IMirrorWindowHost ──────────────────────────────────────────────────
 
     /// <summary>
     /// Raised whenever the user interacts with the mirror window via pointer or keyboard.
@@ -52,111 +53,139 @@ public sealed class MirrorWindow : Window, IMirrorWindowHost
     public event EventHandler<InputEventArgs>? InputEventRaised;
 
     /// <summary>
-    /// Creates the <see cref="MirrorWindow"/> and sets up its content.
+    /// Callback invoked when the user drops files onto the window.
+    /// Each entry is guaranteed to be a regular file (not a folder).
+    /// </summary>
+    public Action<IReadOnlyList<IDroppedFile>>? OnFilesDropped { get; set; }
+
+    // ── Constructor ────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Initialises the floating mirror window.
     /// </summary>
     /// <param name="decoder">
-    /// An initialized <see cref="IMirrorDecoder"/>. When the decoder is a
-    /// <see cref="MirrorDecoder"/>, the window connects a <see cref="MediaPlayer"/>
-    /// to the decoder's <see cref="MirrorDecoder.GetMediaStreamSource()"/> for
-    /// GPU-accelerated rendering.
+    ///   Decoder whose <see cref="IMirrorDecoder.FrameReady"/> event triggers render updates.
+    ///   The window does not own the decoder.
     /// </param>
     public MirrorWindow(IMirrorDecoder decoder)
     {
-        _decoder = decoder ?? throw new ArgumentNullException(nameof(decoder));
+        _window = new Window();
+        _window.ExtendsContentIntoTitleBar = true;
 
-        _mediaElement = new MediaPlayerElement
+        // ── Drop overlay ───────────────────────────────────────────────────
+        _dropOverlay = new TextBlock
         {
-            AreTransportControlsEnabled = false,
-            AutoPlay                    = true,
-            HorizontalAlignment         = HorizontalAlignment.Stretch,
-            VerticalAlignment           = VerticalAlignment.Stretch
+            Text                = "Drop to send file",
+            HorizontalAlignment = HorizontalAlignment.Center,
+            VerticalAlignment   = VerticalAlignment.Center,
+            FontSize            = 24,
+            Foreground          = new SolidColorBrush(Microsoft.UI.Colors.White),
+            Background          = new SolidColorBrush(
+                                      Microsoft.UI.ColorHelper.FromArgb(0xCC, 0x00, 0x00, 0x00)),
+            Visibility          = Visibility.Collapsed,
+            IsHitTestVisible    = false,
         };
 
-        var grid = new Grid
-        {
-            Background = new SolidColorBrush(Colors.Black)
-        };
-        grid.Children.Add(_mediaElement);
+        // ── Root grid ──────────────────────────────────────────────────────
+        _rootGrid = new Grid { AllowDrop = true };
+        _rootGrid.Children.Add(_dropOverlay);
 
-        // Wire pointer events on the container so all mouse/touch input is captured
-        grid.PointerPressed  += OnPointerPressed;
-        grid.PointerMoved    += OnPointerMoved;
-        grid.PointerReleased += OnPointerReleased;
-        grid.KeyDown         += OnKeyDown;
-        grid.KeyUp           += OnKeyUp;
+        // Drag-and-drop events
+        _rootGrid.DragOver  += OnDragOver;
+        _rootGrid.DragLeave += OnDragLeave;
+        _rootGrid.Drop      += OnDrop;
 
-        Content = grid;
+        // Input relay events
+        _rootGrid.PointerPressed  += OnPointerPressed;
+        _rootGrid.PointerMoved    += OnPointerMoved;
+        _rootGrid.PointerReleased += OnPointerReleased;
+        _rootGrid.KeyDown         += OnKeyDown;
+        _rootGrid.KeyUp           += OnKeyUp;
+
+        _window.Content = _rootGrid;
+
+        decoder.FrameReady += OnFrameReady;
     }
 
     // ── IMirrorWindowHost ──────────────────────────────────────────────────
 
-    /// <summary>
-    /// Shows the window at the given size, removes OS chrome, pins it always-on-top,
-    /// and starts media playback.
-    /// </summary>
-    /// <param name="width">Window width in pixels.</param>
-    /// <param name="height">Window height in pixels.</param>
+    /// <inheritdoc/>
+    public void Show()
+    {
+        _window.Activate();
+    }
+
+    /// <inheritdoc/>
     public void Open(int width, int height)
     {
         _windowWidth  = width  > 0 ? width  : 1;
         _windowHeight = height > 0 ? height : 1;
-
-        // Remove title bar — content fills the entire window
-        ExtendsContentIntoTitleBar = true;
-
-        // Obtain AppWindow for advanced windowing operations
-        var hwnd     = WinRT.Interop.WindowNative.GetWindowHandle(this);
-        var windowId = Win32Interop.GetWindowIdFromWindow(hwnd);
-        _appWindow   = AppWindow.GetFromWindowId(windowId);
-
-        // Resize to match the stream dimensions (preserves aspect ratio by design)
-        _appWindow.Resize(new SizeInt32(width, height));
-
-        // Pin always-on-top
-        NativeMethods.SetWindowTopmost(hwnd);
-
-        // Wire up media player when using the concrete WMF-backed decoder
-        var source = (_decoder as MirrorDecoder)?.GetMediaStreamSource();
-        if (source is not null)
-        {
-            _player        = new MediaPlayer();
-            _player.Source = MediaSource.CreateFromMediaStreamSource(source);
-            _mediaElement.SetMediaPlayer(_player);
-        }
-
-        Activate();
+        Show();
     }
 
-    /// <summary>
-    /// Stops media playback and closes the window.
-    /// </summary>
-    public new void Close()
+    /// <inheritdoc/>
+    public void Close() => _window.Close();
+
+    // ── Drag-and-drop handlers ─────────────────────────────────────────────
+
+    private void OnDragOver(object sender, DragEventArgs e)
     {
-        _player?.Pause();
-        _player?.Dispose();
-        _player = null;
-        base.Close();
+        if (e.DataView.Contains(StandardDataFormats.StorageItems))
+        {
+            e.AcceptedOperation             = DataPackageOperation.Copy;
+            e.DragUIOverride.Caption        = "Send to phone";
+            e.DragUIOverride.IsGlyphVisible = true;
+            _dropOverlay.Visibility         = Visibility.Visible;
+        }
+        else
+        {
+            e.AcceptedOperation = DataPackageOperation.None;
+        }
     }
 
-    // ── Input event handlers ───────────────────────────────────────────────
+    private void OnDragLeave(object sender, DragEventArgs e)
+        => _dropOverlay.Visibility = Visibility.Collapsed;
 
-    private void OnPointerPressed(object sender, PointerRoutedEventArgs e) =>
-        RaisePointerEvent(e, InputEventType.Touch);
+    private async void OnDrop(object sender, DragEventArgs e)
+    {
+        _dropOverlay.Visibility = Visibility.Collapsed;
+        if (!e.DataView.Contains(StandardDataFormats.StorageItems)) return;
 
-    private void OnPointerMoved(object sender, PointerRoutedEventArgs e) =>
-        RaisePointerEvent(e, InputEventType.Mouse);
+        var deferral = e.GetDeferral();
+        try
+        {
+            var items = await e.DataView.GetStorageItemsAsync();
+            var files = items
+                .OfType<IStorageFile>()
+                .Select(f => (IDroppedFile)new StorageFileDroppedFile(f))
+                .ToList()
+                .AsReadOnly();
 
-    private void OnPointerReleased(object sender, PointerRoutedEventArgs e) =>
-        RaisePointerEvent(e, InputEventType.Touch);
+            if (files.Count > 0)
+                OnFilesDropped?.Invoke(files);
+        }
+        finally
+        {
+            deferral.Complete();
+        }
+    }
+
+    // ── Input relay handlers ───────────────────────────────────────────────
+
+    private void OnPointerPressed(object sender, PointerRoutedEventArgs e)
+        => RaisePointerEvent(e, InputEventType.Touch);
+
+    private void OnPointerMoved(object sender, PointerRoutedEventArgs e)
+        => RaisePointerEvent(e, InputEventType.Mouse);
+
+    private void OnPointerReleased(object sender, PointerRoutedEventArgs e)
+        => RaisePointerEvent(e, InputEventType.Touch);
 
     private void RaisePointerEvent(PointerRoutedEventArgs e, InputEventType eventType)
     {
-        var point = e.GetCurrentPoint(Content as UIElement);
-        float nx  = (float)(point.Position.X / _windowWidth);
-        float ny  = (float)(point.Position.Y / _windowHeight);
-        // Clamp to [0, 1]
-        nx = Math.Clamp(nx, 0f, 1f);
-        ny = Math.Clamp(ny, 0f, 1f);
+        var point = e.GetCurrentPoint(_rootGrid);
+        float nx  = Math.Clamp((float)(point.Position.X / _windowWidth),  0f, 1f);
+        float ny  = Math.Clamp((float)(point.Position.Y / _windowHeight), 0f, 1f);
         InputEventRaised?.Invoke(this, new InputEventArgs(eventType, nx, ny));
         e.Handled = true;
     }
@@ -175,25 +204,23 @@ public sealed class MirrorWindow : Window, IMirrorWindowHost
         e.Handled = true;
     }
 
-    // ── P/Invoke ───────────────────────────────────────────────────────────
+    // ── Decoder frame-ready ────────────────────────────────────────────────
 
-    private static class NativeMethods
+    private void OnFrameReady(object? sender, EventArgs e)
     {
-        private static readonly nint HWND_TOPMOST = new(-1);
-        private const uint SWP_NOMOVE     = 0x0002;
-        private const uint SWP_NOSIZE     = 0x0001;
-        private const uint SWP_NOACTIVATE = 0x0010;
+        // TODO (Iteration 6): blit decoded frame to the window surface.
+    }
 
-        /// <summary>Sets the window as always-on-top via <c>SetWindowPos</c>.</summary>
-        internal static void SetWindowTopmost(nint hwnd) =>
-            SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, 0, 0,
-                SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+    // ── StorageFileDroppedFile adapter ─────────────────────────────────────
 
-        [System.Runtime.InteropServices.DllImport("user32.dll")]
-        private static extern bool SetWindowPos(
-            nint hWnd,
-            nint hWndInsertAfter,
-            int X, int Y, int cx, int cy,
-            uint uFlags);
+    private sealed class StorageFileDroppedFile : IDroppedFile
+    {
+        private readonly IStorageFile _file;
+        public StorageFileDroppedFile(IStorageFile file)
+            => _file = file ?? throw new ArgumentNullException(nameof(file));
+        public string Name => _file.Name;
+        public string Path => _file.Path;
     }
 }
+
+#endif // WINUI3

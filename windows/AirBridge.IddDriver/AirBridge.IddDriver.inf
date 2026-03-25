@@ -1,0 +1,89 @@
+; AirBridge.IddDriver.inf
+; INF file for the AirBridge Virtual Display (IddCx UMDF2 driver)
+;
+; Display class GUID: {4D36E968-E325-11CE-BFC1-08002BE10318}
+;
+; Installation:
+;   devcon.exe install AirBridge.IddDriver.inf root\AirBridgeIdd
+;
+; Test-signing (developer machines only):
+;   bcdedit /set testsigning on
+;   (reboot required)
+;
+; Production: driver must be signed with an EV certificate and submitted to
+; the Microsoft Hardware Dev Center for WHQL attestation signing.
+
+[Version]
+Signature   = "$WINDOWS NT$"
+Class       = Display
+ClassGuid   = {4D36E968-E325-11CE-BFC1-08002BE10318}
+Provider    = %ManufacturerName%
+CatalogFile = AirBridge.IddDriver.cat
+DriverVer   = 03/25/2026, 1.0.0.0
+PnpLockdown = 1
+
+[DestinationDirs]
+DefaultDestDir = 12           ; \Windows\System32\drivers  (for UMDF2 use 13)
+UMDriverCopy   = 13           ; \Windows\System32\DriverStore\FileRepository\...
+
+[SourceDisksNames]
+1 = %DiskName%
+
+[SourceDisksFiles]
+AirBridge.IddDriver.dll = 1
+
+; ── Manufacturer / Models ──────────────────────────────────────────────────
+
+[Manufacturer]
+%ManufacturerName% = Standard, NTamd64
+
+[Standard.NTamd64]
+%DeviceDescription% = AirBridgeIdd_Install, root\AirBridgeIdd
+
+; ── Install sections ───────────────────────────────────────────────────────
+
+[AirBridgeIdd_Install.NT]
+CopyFiles = UMDriverCopy
+
+[AirBridgeIdd_Install.NT.hw]
+; No hardware IDs required for a software (root-enumerated) device
+
+[AirBridgeIdd_Install.NT.Services]
+AddService = WUDFRd, 0x000001fa, WUDFRD_ServiceInstall
+
+[WUDFRD_ServiceInstall]
+DisplayName   = %WudfRdDisplayName%
+ServiceType   = 1
+StartType     = 3
+ErrorControl  = 1
+ServiceBinary = %12%\WUDFRd.sys
+
+[AirBridgeIdd_Install.NT.Wdf]
+UmdfDriver           = AirBridge.IddDriver
+UmdfServiceOrder     = AirBridge.IddDriver
+UmdfImpersonationLevel     = Impersonation
+UmdfMethodNeitherAction    = Copy
+UmdfKernelModeClientPolicy = AllowKernelModeClients
+UmdfFileObjectPolicy       = AllowNullAndUnknownFileObjects
+UmdfFsContextUsePolicy     = CannotUseFsContexts
+
+[AirBridgeIdd_Install_UmdfService]
+UmdfServiceBinary = %13%\AirBridge.IddDriver.dll
+UmdfLibraryVersion = $UMDF_VERSION$
+ServiceBinary      = %13%\AirBridge.IddDriver.dll
+
+[UMDriverCopy]
+AirBridge.IddDriver.dll
+
+; ── IddCx co-installer ─────────────────────────────────────────────────────
+
+[AirBridgeIdd_Install.NT.CoInstallers]
+; No extra co-installers required; WDF/UMDF2 handles everything
+
+; ── Strings ────────────────────────────────────────────────────────────────
+
+[Strings]
+ManufacturerName    = "AirBridge"
+DiskName            = "AirBridge IddCx Driver Disk"
+DeviceDescription   = "AirBridge Virtual Display (IddCx)"
+WudfRdDisplayName   = "Windows Driver Foundation - User-mode Driver Framework Reflector"

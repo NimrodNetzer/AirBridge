@@ -58,6 +58,15 @@
                 android:resource="@xml/accessibility_service_config" />
         </service>
 
+        <!-- Tablet as Second Monitor: full-screen H.264 renderer (Windows → Android) -->
+        <activity
+            android:name=".display.TabletDisplayActivity"
+            android:exported="false"
+            android:screenOrientation="landscape"
+            android:theme="@android:style/Theme.NoTitleBar.Fullscreen"
+            android:configChanges="orientation|screenSize|keyboardHidden"
+            android:launchMode="singleTask" />
+
     </application>
 
 </manifest>
