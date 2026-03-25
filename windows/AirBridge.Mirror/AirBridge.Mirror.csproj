@@ -6,9 +6,18 @@
   </ItemGroup>
 
   <PropertyGroup>
-    <TargetFramework>net8.0</TargetFramework>
+    <!-- net8.0-windows gives access to Windows.Media.*, Windows.Graphics.* WinRT APIs natively -->
+    <TargetFramework>net8.0-windows10.0.19041.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
+    <RuntimeIdentifiers>win-x64;win-x86;win-arm64</RuntimeIdentifiers>
   </PropertyGroup>
+
+  <ItemGroup>
+    <!-- MirrorWindow.cs requires WinUI 3 (Microsoft.UI.Xaml) and belongs in AirBridge.App.
+         Excluded here so the Mirror module compiles without Windows App SDK tooling.
+         Will be re-integrated in Iteration 7 when AirBridge.App is created. -->
+    <Compile Remove="MirrorWindow.cs" />
+  </ItemGroup>
 
 </Project>

@@ -142,6 +142,49 @@ Android                             Windows
 
 ---
 
+## Mirror Message Binary Layouts
+
+### MirrorStart (type 0x20) — Android → Windows
+
+Announces a new mirror session and stream parameters.
+
+```
+[1 byte ] type = 0x20
+[4 bytes] session-id length (N)
+[N bytes] session-id (UTF-8)
+[4 bytes] width  (int32, pixels)
+[4 bytes] height (int32, pixels)
+[4 bytes] fps    (int32, frames per second)
+[4 bytes] codec string length (M)
+[M bytes] codec  (UTF-8, e.g. "H264" or "H265")
+```
+
+### MirrorFrame (type 0x21) — Android → Windows
+
+Carries one encoded H.264/H.265 NAL unit buffer.
+
+```
+[1 byte ] type = 0x21
+[4 bytes] session-id length (N)
+[N bytes] session-id (UTF-8)
+[8 bytes] timestamp-ms (int64, presentation time in milliseconds)
+[1 byte ] flags (bit 0 = keyframe)
+[4 bytes] payload length (P)
+[P bytes] H.264 NAL data
+```
+
+### MirrorStop (type 0x22) — Either direction
+
+Signals graceful teardown of the mirror session.
+
+```
+[1 byte ] type = 0x22
+[4 bytes] session-id length (N)
+[N bytes] session-id (UTF-8)
+```
+
+---
+
 ## Versioning Rules
 
 - Protocol version is a single integer, currently `1`
