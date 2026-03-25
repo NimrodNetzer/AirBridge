@@ -52,6 +52,9 @@ dependencies {
     implementation(libs.material)
     implementation(libs.kotlinx.coroutines.android)
 
+    // Security (EncryptedSharedPreferences for key storage)
+    implementation(libs.androidx.security.crypto)
+
     // Hilt DI
     implementation(libs.hilt.android)
     kapt(libs.hilt.compiler)
