@@ -1,0 +1,46 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.0.31903.59
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "AirBridge.Core", "AirBridge.Core\AirBridge.Core.csproj", "{2B96A02A-A58C-42DF-A4CD-D8CCACA0B908}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "AirBridge.Transport", "AirBridge.Transport\AirBridge.Transport.csproj", "{F09DF1D1-854E-4C6C-AED8-67720780DCC1}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "AirBridge.Transfer", "AirBridge.Transfer\AirBridge.Transfer.csproj", "{D5567724-87D1-46EE-A0F8-72807F219076}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "AirBridge.Mirror", "AirBridge.Mirror\AirBridge.Mirror.csproj", "{C1484F8A-427A-4433-A848-76269F919B14}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "AirBridge.Tests", "AirBridge.Tests\AirBridge.Tests.csproj", "{83DE1BF2-1DE1-4D6D-B471-4B88F41A95D2}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{2B96A02A-A58C-42DF-A4CD-D8CCACA0B908}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{2B96A02A-A58C-42DF-A4CD-D8CCACA0B908}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{2B96A02A-A58C-42DF-A4CD-D8CCACA0B908}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{2B96A02A-A58C-42DF-A4CD-D8CCACA0B908}.Release|Any CPU.Build.0 = Release|Any CPU
+		{F09DF1D1-854E-4C6C-AED8-67720780DCC1}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{F09DF1D1-854E-4C6C-AED8-67720780DCC1}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{F09DF1D1-854E-4C6C-AED8-67720780DCC1}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{F09DF1D1-854E-4C6C-AED8-67720780DCC1}.Release|Any CPU.Build.0 = Release|Any CPU
+		{D5567724-87D1-46EE-A0F8-72807F219076}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{D5567724-87D1-46EE-A0F8-72807F219076}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{D5567724-87D1-46EE-A0F8-72807F219076}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{D5567724-87D1-46EE-A0F8-72807F219076}.Release|Any CPU.Build.0 = Release|Any CPU
+		{C1484F8A-427A-4433-A848-76269F919B14}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{C1484F8A-427A-4433-A848-76269F919B14}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{C1484F8A-427A-4433-A848-76269F919B14}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{C1484F8A-427A-4433-A848-76269F919B14}.Release|Any CPU.Build.0 = Release|Any CPU
+		{83DE1BF2-1DE1-4D6D-B471-4B88F41A95D2}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{83DE1BF2-1DE1-4D6D-B471-4B88F41A95D2}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{83DE1BF2-1DE1-4D6D-B471-4B88F41A95D2}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{83DE1BF2-1DE1-4D6D-B471-4B88F41A95D2}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+EndGlobal

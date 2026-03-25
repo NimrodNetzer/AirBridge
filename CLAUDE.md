@@ -180,20 +180,66 @@ AirBridge/
 - **PR requirements:** passing CI, one approval, no unresolved review comments
 - **Commit style:** conventional commits (`feat:`, `fix:`, `chore:`, `docs:`, `test:`)
 - **Breaking changes:** must be flagged in PR title and CHANGELOG
+- **Merge flow:** `feature/*` → `dev` (PR + CI green) → `main` (milestone releases only)
+
+---
+
+## Branch Strategy
+
+| Branch | Purpose | Status |
+|--------|---------|--------|
+| `main` | Stable, production-ready releases | Permanent |
+| `dev` | Integration — all feature branches merge here | Permanent |
+| `feature/windows-transport` | Windows mDNS discovery + TLS socket layer | Ready for Iteration 2 |
+| `feature/android-transport` | Android mDNS discovery + TLS socket layer | Ready for Iteration 2 |
+| `feature/pairing-flow` | TOFU pairing + Ed25519 key exchange | Blocked: needs transport branches merged first |
+| `feature/file-transfer` | Chunked file transfer engine (both platforms) | Blocked: needs pairing merged first |
+| `feature/screen-mirror` | Phone mirroring + tablet second monitor | Blocked: needs pairing merged first |
+
+**Rule:** All scaffold/foundation work lands directly on `dev`. Feature agents always branch from `dev`.
+
+---
+
+## Agent Workflow
+
+Each major feature module is implemented by a dedicated agent on its own branch. Agents work in isolation and submit PRs to `dev`.
+
+| Agent | Branch | Scope | Depends On |
+|-------|--------|-------|------------|
+| windows-transport-agent | `feature/windows-transport` | mDNS discovery (Windows), TLS server/client socket, message framing | Iteration 1 scaffold on `dev` |
+| android-transport-agent | `feature/android-transport` | NsdManager discovery, TLS client socket, message framing (Kotlin) | Iteration 1 scaffold on `dev` |
+| pairing-agent | `feature/pairing-flow` | Ed25519 keygen, TOFU handshake, PIN verification (both platforms) | Both transport branches merged to `dev` |
+| file-transfer-agent | `feature/file-transfer` | Chunked transfer, resume, SHA-256 verify, transfer queue | `feature/pairing-flow` merged to `dev` |
+| mirror-agent | `feature/screen-mirror` | MediaProjection capture, H.264 encode/decode, floating window, IddCx driver | `feature/pairing-flow` merged to `dev` |
+
+**How to launch an agent:** Tell Claude — "work on branch `feature/X`, base off `dev`, scope is Y". The agent works in a worktree, submits changes, and you review the PR before merging.
+
+---
+
+## Iteration Roadmap
+
+| Iteration | Focus | Branches |
+|-----------|-------|---------|
+| **1 — Scaffold** ✅ | Solution structure, interfaces, CI, protocol spec | `dev` |
+| **2 — Transport** | mDNS discovery + TLS sockets on both platforms | `feature/windows-transport`, `feature/android-transport` (parallel) |
+| **3 — Pairing** | TOFU key exchange + PIN confirmation flow | `feature/pairing-flow` |
+| **4 — File Transfer** | Chunked transfer engine, UI | `feature/file-transfer` |
+| **5 — Mirror MVP** | Phone screen as floating window (view only) | `feature/screen-mirror` |
+| **6 — Mirror Full** | Input relay, drag-and-drop, IddCx tablet display | `feature/screen-mirror` |
+| **7 — Polish** | Unified UI, installer, performance, security audit | `dev` → `main` |
 
 ---
 
 ## Current Status
 
-- [ ] Project scaffolding (solution structure, Gradle setup)
-- [ ] Device discovery prototype (mDNS on both platforms)
-- [ ] Secure pairing flow
-- [ ] File transfer MVP
-- [ ] Phone mirroring MVP (view only)
-- [ ] Phone mirroring with input relay
-- [ ] Tablet as second monitor (virtual display driver)
-- [ ] Unified UI (all features in one app)
-- [ ] Packaging and distribution
+- [x] CLAUDE.md — project reference document
+- [x] Branch strategy — 6 branches created and documented
+- [x] Iteration 1 — Project scaffold (solution structure, interfaces, CI, protocol spec)
+- [ ] Iteration 2 — Transport layer (mDNS + TLS)
+- [ ] Iteration 3 — Pairing flow
+- [ ] Iteration 4 — File transfer
+- [ ] Iteration 5/6 — Screen mirroring
+- [ ] Iteration 7 — Polish + release
 
 ---
 

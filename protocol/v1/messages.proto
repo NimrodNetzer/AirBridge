@@ -1,0 +1,167 @@
+syntax = "proto3";
+
+package airbridge.v1;
+
+option csharp_namespace = "AirBridge.Transport.Protocol.V1";
+option java_package = "com.airbridge.protocol.v1";
+option java_outer_classname = "MessagesProto";
+
+// ─── Connection & Pairing ──────────────────────────────────────────────────
+
+message Handshake {
+  uint32 protocol_version = 1;   // Must be 1 for this spec
+  string device_id = 2;          // Stable UUID for this device
+  string device_name = 3;        // Human-readable display name
+  DeviceType device_type = 4;
+  string app_version = 5;        // Semver string e.g. "1.0.0"
+}
+
+message HandshakeAck {
+  uint32 protocol_version = 1;   // Version the host will use
+  string device_id = 2;
+  string device_name = 3;
+  DeviceType device_type = 4;
+  bool is_paired = 5;
+}
+
+message PairingRequest {
+  bytes public_key = 1;          // Ed25519 public key (32 bytes)
+  string pin = 2;                // 6-digit PIN shown to user
+  string device_name = 3;
+}
+
+message PairingResponse {
+  bool accepted = 1;
+  bytes public_key = 2;          // Host's Ed25519 public key (if accepted)
+  string reject_reason = 3;      // Human-readable reason if rejected
+}
+
+// ─── File Transfer ─────────────────────────────────────────────────────────
+
+message FileTransferStart {
+  string session_id = 1;
+  string filename = 2;
+  uint64 total_size = 3;         // Total file size in bytes
+  uint32 chunk_size = 4;         // Chunk size in bytes (default 262144 = 256KB)
+  bytes sha256 = 5;              // SHA-256 of the full file (32 bytes)
+  string mime_type = 6;
+}
+
+message FileChunk {
+  string session_id = 1;
+  uint32 index = 2;              // 0-based chunk index
+  bytes data = 3;
+  bool is_last = 4;
+}
+
+message FileTransferAck {
+  string session_id = 1;
+  uint32 next_expected = 2;      // Next chunk index receiver wants (for resume)
+  bool success = 3;              // Final ack: true = integrity check passed
+}
+
+message FileTransferEnd {
+  string session_id = 1;
+  bytes sha256 = 2;              // Final hash for receiver to verify
+}
+
+// ─── Screen Mirror ─────────────────────────────────────────────────────────
+
+message MirrorStart {
+  string session_id = 1;
+  uint32 width = 2;
+  uint32 height = 3;
+  uint32 fps = 4;
+  VideoCodec codec = 5;
+  MirrorMode mode = 6;
+}
+
+message MirrorFrame {
+  string session_id = 1;
+  uint64 pts = 2;                // Presentation timestamp in microseconds
+  bool is_keyframe = 3;
+  bytes data = 4;                // Raw NAL units (H.264 or H.265)
+}
+
+message MirrorStop {
+  string session_id = 1;
+  string reason = 2;
+}
+
+// ─── Input Events ──────────────────────────────────────────────────────────
+
+message InputEvent {
+  string session_id = 1;
+  InputType type = 2;
+  float x = 3;                   // Normalized 0.0–1.0
+  float y = 4;                   // Normalized 0.0–1.0
+  int32 keycode = 5;             // Android KeyEvent keycode
+  int32 meta_state = 6;          // Modifier keys bitmask
+  PointerAction pointer_action = 7;
+}
+
+// ─── Clipboard ─────────────────────────────────────────────────────────────
+
+message ClipboardSync {
+  string text = 1;
+}
+
+// ─── Keepalive ─────────────────────────────────────────────────────────────
+
+message Ping {
+  uint64 timestamp = 2;          // Unix timestamp ms
+}
+
+message Pong {
+  uint64 timestamp = 2;
+  uint64 echo_timestamp = 3;     // Echo the ping timestamp
+}
+
+// ─── Errors ────────────────────────────────────────────────────────────────
+
+message Error {
+  ErrorCode code = 1;
+  string message = 2;
+}
+
+// ─── Enums ─────────────────────────────────────────────────────────────────
+
+enum DeviceType {
+  DEVICE_TYPE_UNKNOWN = 0;
+  DEVICE_TYPE_WINDOWS_PC = 1;
+  DEVICE_TYPE_ANDROID_PHONE = 2;
+  DEVICE_TYPE_ANDROID_TABLET = 3;
+}
+
+enum VideoCodec {
+  VIDEO_CODEC_H264 = 0;
+  VIDEO_CODEC_H265 = 1;
+}
+
+enum MirrorMode {
+  MIRROR_MODE_PHONE_WINDOW = 0;  // Phone as floating window on PC
+  MIRROR_MODE_TABLET_DISPLAY = 1; // Tablet as second monitor
+}
+
+enum InputType {
+  INPUT_TYPE_TOUCH = 0;
+  INPUT_TYPE_KEY = 1;
+  INPUT_TYPE_MOUSE = 2;
+}
+
+enum PointerAction {
+  POINTER_ACTION_DOWN = 0;
+  POINTER_ACTION_UP = 1;
+  POINTER_ACTION_MOVE = 2;
+}
+
+enum ErrorCode {
+  ERROR_CODE_UNKNOWN = 0;
+  ERROR_CODE_VERSION_MISMATCH = 1;
+  ERROR_CODE_NOT_PAIRED = 2;
+  ERROR_CODE_PAIRING_REJECTED = 3;
+  ERROR_CODE_TRANSFER_INTERRUPTED = 4;
+  ERROR_CODE_MIRROR_INTERRUPTED = 5;
+  ERROR_CODE_INVALID_MESSAGE = 6;
+  ERROR_CODE_UNAUTHORIZED = 7;
+}
