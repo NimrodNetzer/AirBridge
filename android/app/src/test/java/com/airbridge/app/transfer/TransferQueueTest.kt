@@ -2,6 +2,7 @@ package com.airbridge.app.transfer
 
 import com.airbridge.app.core.interfaces.TransferState
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.Test
@@ -39,8 +40,8 @@ class TransferQueueTest {
             val (sender, receiver) = makePair("q1")
 
             // Run sessions in separate threads (they block on pipe I/O)
-            val sThread = Thread { runTest { sender.start() } }
-            val rThread = Thread { runTest { receiver.start() } }
+            val sThread = Thread { runBlocking { sender.start() } }
+            val rThread = Thread { runBlocking { receiver.start() } }
             sThread.start(); rThread.start()
             sThread.join(5_000); rThread.join(5_000)
 

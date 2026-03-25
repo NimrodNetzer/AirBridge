@@ -138,9 +138,6 @@ class TransferSessionTest {
             networkStream = ByteArrayOutputStream()
         )
         session.cancel()
-        // Collect one value from stateFlow
-        val states = mutableListOf<TransferState>()
-        session.stateFlow.collect { states.add(it); if (states.size >= 1) return@collect }
-        assertTrue(states.any { it == TransferState.CANCELLED || it == TransferState.PENDING })
+        assertEquals(TransferState.CANCELLED, session.currentState)
     }
 }

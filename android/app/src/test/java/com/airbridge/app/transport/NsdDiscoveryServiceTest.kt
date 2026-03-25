@@ -46,8 +46,8 @@ class NsdDiscoveryServiceTest {
     }
 
     /**
-     * Creates a fully-resolved [NsdServiceInfo] with the given parameters.
-     * Uses reflection to set [NsdServiceInfo.host] since it is not publicly settable via API.
+     * Creates a fully-resolved [NsdServiceInfo] mock with the given parameters.
+     * Uses MockK to stub [NsdServiceInfo.host] since there is no public setter in the SDK stubs.
      */
     private fun resolvedServiceInfo(
         serviceName: String = "TestDevice",
@@ -57,22 +57,18 @@ class NsdDiscoveryServiceTest {
         deviceName: String? = null,
         deviceType: DeviceType? = null
     ): NsdServiceInfo {
-        val info = NsdServiceInfo()
-        info.serviceName = serviceName
-        info.serviceType = "_airbridge._tcp."
-        info.port = port
+        val attrs = mutableMapOf<String, ByteArray>()
+        if (deviceId != null)   attrs["deviceId"]   = deviceId.toByteArray(Charsets.UTF_8)
+        if (deviceName != null) attrs["deviceName"]  = deviceName.toByteArray(Charsets.UTF_8)
+        if (deviceType != null) attrs["deviceType"]  = deviceType.name.toByteArray(Charsets.UTF_8)
 
-        // Set host via reflection (NsdServiceInfo has no public host setter in test scope)
-        val hostField = NsdServiceInfo::class.java.getDeclaredField("mHost")
-        hostField.isAccessible = true
-        hostField.set(info, InetAddress.getByName(ip))
-
-        // Set TXT record attributes
-        if (deviceId != null)   info.setAttribute("deviceId",   deviceId)
-        if (deviceName != null) info.setAttribute("deviceName", deviceName)
-        if (deviceType != null) info.setAttribute("deviceType", deviceType.name)
-
-        return info
+        return mockk<NsdServiceInfo>(relaxed = true) {
+            every { this@mockk.serviceName } returns serviceName
+            every { serviceType }            returns "_airbridge._tcp."
+            every { this@mockk.port }        returns port
+            every { host }                   returns InetAddress.getByName(ip)
+            every { attributes }             returns attrs
+        }
     }
 
     // -------------------------------------------------------------------------
