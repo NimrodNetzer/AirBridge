@@ -19,9 +19,10 @@ public class TransferQueueTests
         string sessionId, int byteCount = 128)
     {
         var pipe   = new System.IO.Pipelines.Pipe();
-        var source = new MemoryStream(new byte[byteCount]);
+        var data   = new byte[byteCount];
+        Random.Shared.NextBytes(data);
+        var source = new MemoryStream(data, writable: false);
         var sink   = new MemoryStream();
-        Random.Shared.NextBytes(((MemoryStream)source).GetBuffer());
 
         var sender   = new TransferSession(sessionId, "file.bin", byteCount, true,
                             source, pipe.Writer.AsStream());
