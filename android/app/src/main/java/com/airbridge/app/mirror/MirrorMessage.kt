@@ -14,7 +14,9 @@ enum class MirrorMessageType(val value: Byte) {
     /** Android → Windows: one encoded H.264/H.265 frame. */
     MIRROR_FRAME(0x21.toByte()),
     /** Either direction: graceful teardown of a mirror session. */
-    MIRROR_STOP(0x22.toByte());
+    MIRROR_STOP(0x22.toByte()),
+    /** Windows → Android: a pointer, key, or mouse input event to inject on the phone. */
+    INPUT_EVENT(0x30.toByte());
 
     companion object {
         /** Returns the [MirrorMessageType] for [value], or null if unknown. */
@@ -190,6 +192,88 @@ data class MirrorStopMessage(val sessionId: String) {
             val buf    = ByteBuffer.wrap(data, 1, data.size - 1)
             val sidLen = buf.int; val sidBytes = ByteArray(sidLen).also { buf.get(it) }
             return MirrorStopMessage(String(sidBytes, StandardCharsets.UTF_8))
+        }
+    }
+}
+
+/** Kind of input event carried in [InputEventMessage]. Mirrors the Windows-side enum. */
+enum class InputEventKind(val value: Byte) {
+    /** A touch/tap event (finger down, move, or up). */
+    TOUCH(0x00),
+    /** A hardware key press or release. */
+    KEY(0x01),
+    /** A mouse pointer event. */
+    MOUSE(0x02);
+
+    companion object {
+        /** Returns the [InputEventKind] for [value], or null if unknown. */
+        fun fromByte(value: Byte): InputEventKind? =
+            entries.firstOrNull { it.value == value }
+    }
+}
+
+/**
+ * Wire-format message sent by Windows to relay a pointer/key input event to the Android device.
+ *
+ * Binary layout (big-endian):
+ * ```
+ * [1 byte ] type = 0x30
+ * [4 bytes] session-id length (N)
+ * [N bytes] session-id (UTF-8)
+ * [1 byte ] event-kind (0 = TOUCH, 1 = KEY, 2 = MOUSE)
+ * [4 bytes] normalizedX (IEEE 754 float32, 0.0 – 1.0)
+ * [4 bytes] normalizedY (IEEE 754 float32, 0.0 – 1.0)
+ * [1 byte ] has-keycode (0 or 1)
+ * [4 bytes] keycode     (int32, present only if has-keycode = 1)
+ * [4 bytes] metaState   (int32)
+ * ```
+ */
+data class InputEventMessage(
+    val sessionId: String,
+    val eventKind: InputEventKind,
+    val normalizedX: Float,
+    val normalizedY: Float,
+    val keycode: Int?,
+    val metaState: Int
+) {
+    /** Serializes the message to a [ByteArray]. */
+    fun toBytes(): ByteArray {
+        val sidBytes  = sessionId.toByteArray(StandardCharsets.UTF_8)
+        val hasKeycode = keycode != null
+        val size = 1 + 4 + sidBytes.size + 1 + 4 + 4 + 1 + (if (hasKeycode) 4 else 0) + 4
+        val buf  = ByteBuffer.allocate(size)
+        buf.put(MirrorMessageType.INPUT_EVENT.value)
+        buf.putInt(sidBytes.size); buf.put(sidBytes)
+        buf.put(eventKind.value)
+        buf.putFloat(normalizedX)
+        buf.putFloat(normalizedY)
+        if (hasKeycode) {
+            buf.put(0x01.toByte())
+            buf.putInt(keycode!!)
+        } else {
+            buf.put(0x00.toByte())
+        }
+        buf.putInt(metaState)
+        return buf.array()
+    }
+
+    companion object {
+        /**
+         * Deserializes an [InputEventMessage] from [data]
+         * (including the type byte at index 0).
+         */
+        fun fromBytes(data: ByteArray): InputEventMessage {
+            val buf       = ByteBuffer.wrap(data, 1, data.size - 1)
+            val sidLen    = buf.int; val sidBytes = ByteArray(sidLen).also { buf.get(it) }
+            val sessionId = String(sidBytes, StandardCharsets.UTF_8)
+            val kind      = InputEventKind.fromByte(buf.get())
+                ?: throw IllegalArgumentException("Unknown InputEventKind byte")
+            val x         = buf.float
+            val y         = buf.float
+            val hasKey    = buf.get() != 0.toByte()
+            val keycode   = if (hasKey) buf.int else null
+            val metaState = buf.int
+            return InputEventMessage(sessionId, kind, x, y, keycode, metaState)
         }
     }
 }

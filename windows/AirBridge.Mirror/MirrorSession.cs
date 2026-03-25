@@ -59,6 +59,16 @@ public sealed class MirrorSession : IMirrorSession
 
     private CancellationTokenSource? _cts;
 
+    // ── Input send queue ────────────────────────────────────────────────────
+    // A channel is used so SendInputAsync is non-blocking and fire-and-forget safe.
+    private readonly System.Threading.Channels.Channel<InputEventArgs> _inputQueue =
+        System.Threading.Channels.Channel.CreateBounded<InputEventArgs>(
+            new System.Threading.Channels.BoundedChannelOptions(64)
+            {
+                FullMode = System.Threading.Channels.BoundedChannelFullMode.DropOldest,
+                SingleReader = true
+            });
+
     // ── IMirrorSession ──────────────────────────────────────────────────────
 
     /// <inheritdoc/>
@@ -128,10 +138,13 @@ public sealed class MirrorSession : IMirrorSession
 
         try
         {
-            await RunReceiveLoopAsync(_cts.Token).ConfigureAwait(false);
+            var receiveTask = RunReceiveLoopAsync(_cts.Token);
+            var sendTask    = RunInputSendLoopAsync(_cts.Token);
+            await Task.WhenAll(receiveTask, sendTask).ConfigureAwait(false);
         }
         finally
         {
+            _inputQueue.Writer.TryComplete();
             if (State is not MirrorState.Stopped and not MirrorState.Error)
                 State = MirrorState.Stopped;
             CleanUp();
@@ -144,18 +157,29 @@ public sealed class MirrorSession : IMirrorSession
     public Task StopAsync()
     {
         State = MirrorState.Stopped;
+        _inputQueue.Writer.TryComplete();
         _cts?.Cancel();
         CleanUp();
         return Task.CompletedTask;
     }
 
     /// <summary>
-    /// Not implemented in Iteration 5 (view-only mirror). Will be added in Iteration 6.
+    /// Enqueues an input event for forwarding to the connected Android device.
+    /// The event is serialized as an <see cref="InputEventMessage"/> and sent over
+    /// the <see cref="IMessageChannel"/>.
     /// </summary>
+    /// <remarks>
+    /// The method is non-blocking: events are queued and sent by a background loop.
+    /// If the queue is full the oldest pending event is dropped to preserve low latency.
+    /// </remarks>
     public Task SendInputAsync(
         InputEventArgs inputEvent,
         CancellationToken cancellationToken = default)
-        => Task.CompletedTask;
+    {
+        if (inputEvent is null) return Task.CompletedTask;
+        _inputQueue.Writer.TryWrite(inputEvent);
+        return Task.CompletedTask;
+    }
 
     // ── Receive loop ────────────────────────────────────────────────────────
 
@@ -239,6 +263,11 @@ public sealed class MirrorSession : IMirrorSession
         if (_windowFactory is not null)
         {
             _window = _windowFactory(_decoder);
+
+            // Subscribe to input events raised by the window so we can relay them to Android
+            if (_window is MirrorWindow mw)
+                mw.InputEventRaised += (_, evt) => _inputQueue.Writer.TryWrite(evt);
+
             _window.Open(startMsg.Width, startMsg.Height);
         }
 
@@ -260,6 +289,53 @@ public sealed class MirrorSession : IMirrorSession
         }
 
         _decoder.SubmitNalUnit(frameMsg.NalData, frameMsg.TimestampMs, frameMsg.IsKeyFrame);
+    }
+
+    // ── Input send loop ──────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Drains <see cref="_inputQueue"/> and sends each event to the Android peer
+    /// as an <see cref="InputEventMessage"/> with <see cref="MessageType.InputEvent"/>.
+    /// Runs concurrently with the receive loop; stops when the token is cancelled
+    /// or the queue is completed.
+    /// </summary>
+    private async Task RunInputSendLoopAsync(CancellationToken ct)
+    {
+        await foreach (var evt in _inputQueue.Reader.ReadAllAsync(ct).ConfigureAwait(false))
+        {
+            // Map InputEventType → InputEventKind
+            var kind = evt.Type switch
+            {
+                InputEventType.Touch => InputEventKind.Touch,
+                InputEventType.Key   => InputEventKind.Key,
+                _                    => InputEventKind.Mouse
+            };
+
+            var msg = new InputEventMessage(
+                SessionId:   SessionId,
+                EventKind:   kind,
+                NormalizedX: evt.NormalizedX,
+                NormalizedY: evt.NormalizedY,
+                Keycode:     evt.Keycode,
+                MetaState:   evt.MetaState);
+
+            try
+            {
+                await _channel.SendAsync(
+                    new Transport.Protocol.ProtocolMessage(
+                        Transport.Protocol.MessageType.InputEvent,
+                        msg.ToBytes()),
+                    ct).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+            {
+                break;
+            }
+            catch (Exception)
+            {
+                // Best-effort: drop the event if the channel is gone
+            }
+        }
     }
 
     // ── Cleanup ─────────────────────────────────────────────────────────────

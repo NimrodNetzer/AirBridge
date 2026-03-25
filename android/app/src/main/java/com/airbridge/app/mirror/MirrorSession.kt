@@ -17,6 +17,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
 import javax.inject.Inject
 
 /**
@@ -47,6 +48,8 @@ sealed class MirrorResult {
  * @param height         Capture height.
  * @param fps            Target frame rate.
  * @param codec          Codec name sent in [MirrorStartMessage], e.g. "H264".
+ * @param inputInjector  Optional [InputInjector] for relaying input events received from
+ *                       the Windows host. Pass `null` to disable input relay (view-only mode).
  */
 class MirrorSession(
     override val sessionId: String,
@@ -55,7 +58,8 @@ class MirrorSession(
     private val width: Int,
     private val height: Int,
     private val fps: Int,
-    private val codec: String = "H264"
+    private val codec: String = "H264",
+    private val inputInjector: InputInjector? = null
 ) : IMirrorSession {
 
     override val mode: MirrorMode = MirrorMode.PHONE_WINDOW
@@ -96,6 +100,17 @@ class MirrorSession(
         _stateFlow.value = MirrorState.ACTIVE
         _isActive.value  = true
         streaming        = true
+
+        // Update the injector's physical dimensions so it can de-normalise coordinates
+        inputInjector?.let {
+            it.screenWidth  = width
+            it.screenHeight = height
+        }
+
+        // Launch a coroutine to receive INPUT_EVENT messages from the Windows host
+        val receiveJob: Job? = if (inputInjector != null) {
+            scope.launch { runInputReceiveLoop() }
+        } else null
 
         // Stream frames from the capture session over the channel
         captureSession.frames.collect { frame ->
@@ -147,11 +162,51 @@ class MirrorSession(
     }
 
     /**
-     * Not implemented in Iteration 5 (view-only mirror).
-     * Input relay will be added in Iteration 6.
+     * Injects an [InputEventArgs] locally via [InputInjector].
+     *
+     * On the Android side [sendInput] is called when an [InputEventMessage] is received
+     * from the Windows host (i.e. the phone is the *target* of input events).
+     * If no [InputInjector] was supplied at construction the call is a no-op.
      */
     override suspend fun sendInput(event: InputEventArgs) {
-        // No-op in Iteration 5
+        inputInjector?.inject(event)
+    }
+
+    // ── Input receive loop ───────────────────────────────────────────────────
+
+    /**
+     * Collects [MessageType.INPUT_EVENT] messages from [channel.incomingMessages] and
+     * dispatches them to [inputInjector]. Any unknown or malformed message is silently
+     * skipped. The collection stops when the channel's Flow completes or an exception
+     * is thrown.
+     */
+    private suspend fun runInputReceiveLoop() {
+        try {
+            channel.incomingMessages.collect { msg ->
+                if (msg.type != MessageType.INPUT_EVENT) return@collect
+                try {
+                    val inputMsg = InputEventMessage.fromBytes(msg.payload)
+                    // Map InputEventKind → InputEventType for the core interface
+                    val evtType = when (inputMsg.eventKind) {
+                        InputEventKind.TOUCH -> com.airbridge.app.core.interfaces.InputEventType.TOUCH
+                        InputEventKind.KEY   -> com.airbridge.app.core.interfaces.InputEventType.KEY
+                        InputEventKind.MOUSE -> com.airbridge.app.core.interfaces.InputEventType.MOUSE
+                    }
+                    val args = InputEventArgs(
+                        type        = evtType,
+                        normalizedX = inputMsg.normalizedX,
+                        normalizedY = inputMsg.normalizedY,
+                        keycode     = inputMsg.keycode,
+                        metaState   = inputMsg.metaState
+                    )
+                    inputInjector?.inject(args)
+                } catch (_: Exception) {
+                    // Malformed message — skip
+                }
+            }
+        } catch (_: Exception) {
+            // Channel error — exit silently; the main frame-streaming coroutine handles state
+        }
     }
 }
 
@@ -160,7 +215,9 @@ class MirrorSession(
  *
  * Implements [IMirrorService]. Bound via [com.airbridge.app.mirror.di.MirrorModule].
  */
-class MirrorService @Inject constructor() : IMirrorService {
+class MirrorService @Inject constructor(
+    private val inputInjector: InputInjector
+) : IMirrorService {
 
     private val _activeSessions = mutableListOf<IMirrorSession>()
 
@@ -211,7 +268,8 @@ class MirrorService @Inject constructor() : IMirrorService {
             width          = width,
             height         = height,
             fps            = fps,
-            codec          = codec
+            codec          = codec,
+            inputInjector  = inputInjector
         )
         _activeSessions.add(session)
         return session

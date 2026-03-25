@@ -17,7 +17,10 @@ public enum MirrorMessageType : byte
     MirrorFrame = 0x21,
 
     /// <summary>Either direction: graceful teardown of a mirror session.</summary>
-    MirrorStop = 0x22
+    MirrorStop = 0x22,
+
+    /// <summary>Windows → Android: a pointer, key, or mouse input event to inject on the phone.</summary>
+    InputEvent = 0x30
 }
 
 /// <summary>
@@ -163,4 +166,89 @@ public sealed record MirrorStopMessage(string SessionId)
         var sessionId = Encoding.UTF8.GetString(data.Slice(5, sidLen));
         return new MirrorStopMessage(sessionId);
     }
+}
+
+/// <summary>
+/// Wire-format message sent by Windows to relay a pointer/key input event to the Android device.
+/// <para>Binary layout (big-endian):</para>
+/// <code>
+/// [1 byte ] type = 0x30
+/// [4 bytes] session-id length (N)
+/// [N bytes] session-id (UTF-8)
+/// [1 byte ] event-type (0 = Touch, 1 = Key, 2 = Mouse)
+/// [4 bytes] normalizedX (IEEE 754 float32, 0.0 – 1.0)
+/// [4 bytes] normalizedY (IEEE 754 float32, 0.0 – 1.0)
+/// [1 byte ] has-keycode (0 or 1)
+/// [4 bytes] keycode     (int32, present only if has-keycode = 1)
+/// [4 bytes] metaState   (int32)
+/// </code>
+/// </summary>
+public sealed record InputEventMessage(
+    string SessionId,
+    InputEventKind EventKind,
+    float NormalizedX,
+    float NormalizedY,
+    int? Keycode,
+    int MetaState)
+{
+    /// <summary>Serializes the message to bytes.</summary>
+    public byte[] ToBytes()
+    {
+        var sidBytes = Encoding.UTF8.GetBytes(SessionId);
+        // 1 (type) + 4 (sid len) + N + 1 (kind) + 4 (x) + 4 (y) + 1 (hasKey) [+ 4 (keycode)] + 4 (meta)
+        int size = 1 + 4 + sidBytes.Length + 1 + 4 + 4 + 1 + (Keycode.HasValue ? 4 : 0) + 4;
+        var buf  = new byte[size];
+        int pos  = 0;
+
+        buf[pos++] = (byte)MirrorMessageType.InputEvent;
+        BinaryPrimitives.WriteInt32BigEndian(buf.AsSpan(pos, 4), sidBytes.Length); pos += 4;
+        sidBytes.CopyTo(buf, pos);                                                  pos += sidBytes.Length;
+        buf[pos++] = (byte)EventKind;
+        BinaryPrimitives.WriteSingleBigEndian(buf.AsSpan(pos, 4), NormalizedX);    pos += 4;
+        BinaryPrimitives.WriteSingleBigEndian(buf.AsSpan(pos, 4), NormalizedY);    pos += 4;
+        if (Keycode.HasValue)
+        {
+            buf[pos++] = 0x01;
+            BinaryPrimitives.WriteInt32BigEndian(buf.AsSpan(pos, 4), Keycode.Value); pos += 4;
+        }
+        else
+        {
+            buf[pos++] = 0x00;
+        }
+        BinaryPrimitives.WriteInt32BigEndian(buf.AsSpan(pos, 4), MetaState);
+        return buf;
+    }
+
+    /// <summary>
+    /// Deserializes an <see cref="InputEventMessage"/> from <paramref name="data"/>
+    /// (including the type byte at index 0).
+    /// </summary>
+    public static InputEventMessage FromBytes(ReadOnlySpan<byte> data)
+    {
+        int pos     = 1;
+        int sidLen  = BinaryPrimitives.ReadInt32BigEndian(data.Slice(pos, 4));  pos += 4;
+        var sessionId = Encoding.UTF8.GetString(data.Slice(pos, sidLen));       pos += sidLen;
+        var kind    = (InputEventKind)data[pos++];
+        float x     = BinaryPrimitives.ReadSingleBigEndian(data.Slice(pos, 4)); pos += 4;
+        float y     = BinaryPrimitives.ReadSingleBigEndian(data.Slice(pos, 4)); pos += 4;
+        bool hasKey = data[pos++] != 0;
+        int? keycode = null;
+        if (hasKey)
+        {
+            keycode = BinaryPrimitives.ReadInt32BigEndian(data.Slice(pos, 4));  pos += 4;
+        }
+        int meta = BinaryPrimitives.ReadInt32BigEndian(data.Slice(pos, 4));
+        return new InputEventMessage(sessionId, kind, x, y, keycode, meta);
+    }
+}
+
+/// <summary>Kind of input event carried in <see cref="InputEventMessage"/>.</summary>
+public enum InputEventKind : byte
+{
+    /// <summary>A touch/tap event (finger down, move, or up).</summary>
+    Touch = 0,
+    /// <summary>A hardware key press or release.</summary>
+    Key   = 1,
+    /// <summary>A mouse pointer event.</summary>
+    Mouse = 2
 }
