@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.AirBridge" parent="Theme.MaterialComponents.DayNight.NoActionBar">
+        <!-- Colors and theming defined in later iterations -->
+    </style>
+</resources>

@@ -1,0 +1,75 @@
+# ===========================
+# .NET / Windows
+# ===========================
+[Bb]in/
+[Oo]bj/
+[Ll]og/
+[Ll]ogs/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+*.userprefs
+.vs/
+_ReSharper*/
+*.resharper
+*.DotSettings.user
+TestResults/
+[Tt]est[Rr]esult*/
+*.ncrunch*
+*.[Cc]ache
+packages/
+*.nupkg
+*.snupkg
+project.lock.json
+project.fragment.lock.json
+artifacts/
+publish/
+*.msix
+*.appx
+*.appxbundle
+*.appinstaller
+
+# ===========================
+# Android / Gradle
+# ===========================
+.gradle/
+build/
+!gradle/wrapper/gradle-wrapper.jar
+local.properties
+*.iml
+.idea/
+*.keystore
+!debug.keystore
+captures/
+.externalNativeBuild/
+.cxx/
+*.apk
+*.aab
+*.ap_
+*.dex
+
+# ===========================
+# IDE & OS
+# ===========================
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+desktop.ini
+ehthumbs.db
+
+# ===========================
+# Secrets & certs (never commit)
+# ===========================
+*.pem
+*.p12
+*.pfx
+*.cer
+*.key
+secrets.json
+local.settings.json
+appsettings.*.json
+!appsettings.json
