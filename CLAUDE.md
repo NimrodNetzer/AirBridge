@@ -236,11 +236,59 @@ Each major feature module is implemented by a dedicated agent on its own branch.
 - [x] CLAUDE.md — project reference document
 - [x] Branch strategy — 6 branches created and documented
 - [x] Iteration 1 — Project scaffold (solution structure, interfaces, CI, protocol spec)
-- [ ] Iteration 2 — Transport layer (mDNS + TLS)
-- [ ] Iteration 3 — Pairing flow
+- [x] Iteration 2 — Transport layer (mDNS + TLS) — merged to `dev`
+- [x] Iteration 3 — Pairing flow (Ed25519 TOFU, PIN, KeyStore) — on `feature/pairing-flow`, pending merge to `dev`
 - [ ] Iteration 4 — File transfer
 - [ ] Iteration 5/6 — Screen mirroring
 - [ ] Iteration 7 — Polish + release
+
+---
+
+## Agent Briefing (read this before starting any iteration)
+
+This section exists so every agent understands the full picture before writing code — not just the ticket, but how it fits the product.
+
+### What AirBridge is (one paragraph)
+AirBridge is a peer-to-peer local-network app: a Windows desktop host and an Android client communicate directly over Wi-Fi — no accounts, no servers, no internet. The three end-user features are: (1) drag-and-drop file transfer between PC and phone/tablet, (2) the Android tablet acting as a wired-free second monitor for Windows, and (3) the Android phone appearing as a floating window on the PC you can interact with. Every layer you build is infrastructure for one of these three visible features.
+
+### How the layers connect to the product
+```
+User Feature          Depends On
+─────────────────────────────────────────────────────
+File Transfer         Pairing → Transport → Discovery
+Tablet Second Monitor Pairing → Transport → Discovery
+Phone Floating Window Pairing → Transport → Discovery
+```
+- **Discovery (Iteration 2):** Windows and Android find each other on the LAN using mDNS (`_airbridge._tcp.local`). Without this, devices are invisible to each other.
+- **Transport (Iteration 2):** Raw TLS 1.3 TCP sockets + a binary framing layer. All subsequent features send their data through this channel.
+- **Pairing (Iteration 3):** Ed25519 TOFU handshake. Devices exchange public keys and confirm a 6-digit PIN. After pairing, every connection is mutually authenticated — no anonymous access ever.
+- **File Transfer (Iteration 4):** Chunked binary transfer over the paired transport channel. SHA-256 verify, resume support, progress callbacks. This is the first feature the end user can see working end-to-end.
+- **Screen Mirror (Iteration 5/6):** MediaProjection → H.264 MediaCodec → TLS channel → Windows decoder → floating window or IddCx virtual display. Latency target <100ms.
+
+### Technologies per layer (quick reference)
+| Layer | Windows tech | Android tech |
+|-------|-------------|--------------|
+| Discovery | Win32 DnsServiceBrowse / managed mDNS lib | `NsdManager` |
+| Transport | `System.Net.Sockets` + `SslStream` | Java NIO + Kotlin coroutines |
+| Pairing | `System.Security.Cryptography` ECDsa (Ed25519) | `java.security` / Bouncy Castle |
+| File Transfer | `System.IO`, async streams | Kotlin coroutines + `java.io` |
+| Screen capture | — | `MediaProjection` + `MediaCodec` |
+| Screen render | Win2D / Direct3D surface | `SurfaceView` |
+| Virtual display | IddCx driver (C++) | — |
+| UI | WinUI 3 (C#) | Jetpack Compose / XML layouts |
+| DI | Manual / MS DI extensions | Hilt |
+
+### What was built in previous iterations
+- **Iteration 1 (Scaffold):** Solution/project structure, all public interfaces (`IPairingService`, `IDiscoveryService`, `IConnectionManager`, `IMessageChannel`, `ITransferSession`, `IMirrorSession`), CI pipeline, protocol spec in `/protocol/`.
+- **Iteration 2 (Transport):** mDNS advertisement + browsing on both platforms; TLS server and client sockets; binary message framing (length-prefix + message type byte). Both platforms can now discover each other and open an authenticated socket. Code lives in `AirBridge.Transport` (C#) and `android/app/core/` transport package (Kotlin).
+- **Iteration 3 (Pairing):** Ed25519 key generation, persistent `KeyStore` (local file, no cloud), TOFU handshake logic, 6-digit PIN generation and verification. Code lives in `AirBridge.Core/Pairing/` and `android/.../core/pairing/`. Hilt DI wiring in `CoreModule.kt`.
+
+### How to know when your work is testable by the owner
+State clearly in your PR description or commit message:
+- **What the owner can run** — e.g. "run `dotnet test` to verify unit tests pass", or "install the APK and tap Pair — you should see a 6-digit PIN on both devices".
+- **Prerequisites** — e.g. "both devices on the same Wi-Fi", "Android Studio emulator with API 30+".
+- **Expected observable behavior** — describe exactly what the owner will see/hear/read in the UI or logs, not just "it works".
+When a feature is not yet wired to a UI, provide a minimal test harness (console runner, unit test, or adb command) so the owner can verify the logic is live.
 
 ---
 
