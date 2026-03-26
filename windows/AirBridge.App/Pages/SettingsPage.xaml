@@ -1,0 +1,117 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Page x:Class="AirBridge.App.Pages.SettingsPage"
+      xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+      xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+      xmlns:models="using:AirBridge.Core.Models"
+      Background="Transparent">
+
+    <ScrollViewer Margin="24,16" VerticalScrollBarVisibility="Auto">
+        <StackPanel Spacing="24" MaxWidth="640">
+
+            <!-- Page title -->
+            <TextBlock Text="Settings" Style="{StaticResource TitleTextBlockStyle}"/>
+
+            <!-- Auto-start section -->
+            <StackPanel Spacing="8">
+                <TextBlock Text="Startup"
+                           Style="{StaticResource SubtitleTextBlockStyle}"/>
+                <Border Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                        BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                        BorderThickness="1"
+                        CornerRadius="8"
+                        Padding="16">
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <StackPanel VerticalAlignment="Center" Spacing="2">
+                            <TextBlock Text="Start with Windows"
+                                       Style="{StaticResource BodyStrongTextBlockStyle}"/>
+                            <TextBlock Text="Launch AirBridge automatically when Windows starts"
+                                       Style="{StaticResource CaptionTextBlockStyle}"
+                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                        </StackPanel>
+                        <ToggleSwitch Grid.Column="1"
+                                      IsOn="{x:Bind ViewModel.AutoStart, Mode=TwoWay}"
+                                      VerticalAlignment="Center"
+                                      Command="{x:Bind ViewModel.ToggleAutoStartCommand}"/>
+                    </Grid>
+                </Border>
+            </StackPanel>
+
+            <!-- Paired devices section -->
+            <StackPanel Spacing="8">
+                <TextBlock Text="Paired Devices"
+                           Style="{StaticResource SubtitleTextBlockStyle}"/>
+
+                <TextBlock Text="No paired devices."
+                           Style="{StaticResource BodyTextBlockStyle}"
+                           Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                           Visibility="{x:Bind ViewModel.HasNoPairedDevices, Mode=OneWay, Converter={StaticResource BoolToVisibility}}"/>
+
+                <ItemsControl ItemsSource="{x:Bind ViewModel.PairedDevices}">
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate x:DataType="models:DeviceInfo">
+                            <Border Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                                    BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                                    BorderThickness="1"
+                                    CornerRadius="8"
+                                    Padding="16,12"
+                                    Margin="0,0,0,8">
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto"/>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                    </Grid.ColumnDefinitions>
+                                    <FontIcon Grid.Column="0"
+                                              Glyph="{x:Bind DeviceType, Converter={StaticResource DeviceTypeToIcon}}"
+                                              FontSize="24"
+                                              Margin="0,0,12,0"
+                                              Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}"
+                                              VerticalAlignment="Center"/>
+                                    <StackPanel Grid.Column="1" VerticalAlignment="Center" Spacing="2">
+                                        <TextBlock Text="{x:Bind DeviceName}"
+                                                   Style="{StaticResource BodyStrongTextBlockStyle}"/>
+                                        <TextBlock Text="{x:Bind IpAddress}"
+                                                   Style="{StaticResource CaptionTextBlockStyle}"
+                                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                                    </StackPanel>
+                                    <Button Grid.Column="2"
+                                            Content="Revoke"
+                                            Tag="{x:Bind DeviceId}"
+                                            Click="RevokeButton_Click"
+                                            VerticalAlignment="Center"/>
+                                </Grid>
+                            </Border>
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+            </StackPanel>
+
+            <!-- About section -->
+            <StackPanel Spacing="8">
+                <TextBlock Text="About" Style="{StaticResource SubtitleTextBlockStyle}"/>
+                <Border Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                        BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                        BorderThickness="1"
+                        CornerRadius="8"
+                        Padding="16">
+                    <StackPanel Spacing="4">
+                        <TextBlock Style="{StaticResource BodyStrongTextBlockStyle}">
+                            <Run Text="AirBridge  "/>
+                            <Run Text="v" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                            <Run Text="{x:Bind ViewModel.Version}" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                        </TextBlock>
+                        <TextBlock Text="Wireless file transfer and screen mirroring — no accounts, no cloud."
+                                   TextWrapping="Wrap"
+                                   Style="{StaticResource CaptionTextBlockStyle}"
+                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                    </StackPanel>
+                </Border>
+            </StackPanel>
+
+        </StackPanel>
+    </ScrollViewer>
+</Page>
