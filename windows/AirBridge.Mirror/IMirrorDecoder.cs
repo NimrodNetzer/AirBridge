@@ -1,20 +1,17 @@
 namespace AirBridge.Mirror;
 
 /// <summary>
-/// Abstraction over the H.264 decode pipeline.
-/// Implemented by <see cref="MirrorDecoder"/>; a no-op stub is used in unit tests.
+/// Decodes an incoming H.264/H.265 byte stream into rendered frames.
+/// Implemented in the WinUI 3 App layer using Windows Media Foundation
+/// or Direct3D surfaces; mocked in unit tests.
 /// </summary>
 public interface IMirrorDecoder : IDisposable
 {
-    /// <summary>
-    /// Initializes the decoder at the given resolution.
-    /// Must be called before any <see cref="SubmitNalUnit"/> calls.
-    /// </summary>
-    Task InitializeAsync(int width, int height);
+    /// <summary>Feeds a raw encoded frame into the decoder pipeline.</summary>
+    /// <param name="frameData">Encoded video frame bytes.</param>
+    /// <param name="cancellationToken">Token to cancel the decode operation.</param>
+    Task PushFrameAsync(byte[] frameData, CancellationToken cancellationToken = default);
 
-    /// <summary>
-    /// Submits one H.264 NAL unit for decoding.
-    /// Returns a <see cref="DecodeResult"/> indicating whether the NAL was accepted.
-    /// </summary>
-    DecodeResult SubmitNalUnit(byte[] nalData, long timestampMs, bool isKeyFrame);
+    /// <summary>Raised when a decoded frame is ready for rendering.</summary>
+    event EventHandler? FrameReady;
 }

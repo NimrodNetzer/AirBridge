@@ -1,22 +1,25 @@
 namespace AirBridge.Mirror;
 
 /// <summary>
-/// Abstraction over a window that renders the mirror stream.
-/// Implemented by <c>MirrorWindow</c> in the WinUI 3 app project.
-/// A no-op stub is used in unit tests so the state-machine logic
-/// can be exercised without any UI infrastructure.
+/// Abstracts the floating mirror window shown on the Windows desktop.
+/// Implemented by the WinUI 3 <c>MirrorWindow</c> class in the App layer;
+/// mocked in unit tests.
 /// </summary>
 public interface IMirrorWindowHost
 {
     /// <summary>
-    /// Opens (or shows) the window at the given dimensions and begins rendering.
+    /// Shows the window and begins presenting decoded frames.
+    /// Must be called on the UI thread.
     /// </summary>
-    /// <param name="width">Stream width in pixels.</param>
-    /// <param name="height">Stream height in pixels.</param>
-    void Open(int width, int height);
+    void Show();
+
+    /// <summary>Hides and closes the window.</summary>
+    void Close();
 
     /// <summary>
-    /// Closes the window and releases rendering resources.
+    /// Callback invoked whenever the user drops one or more files onto the window.
+    /// The session assigns this to route dropped files through
+    /// <see cref="MirrorSession.SendFileAsync"/>.
     /// </summary>
-    void Close();
+    Action<IReadOnlyList<IDroppedFile>>? OnFilesDropped { get; set; }
 }

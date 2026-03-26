@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Package xmlns="http://schemas.microsoft.com/appx/manifest/foundation/windows10"
+         xmlns:uap="http://schemas.microsoft.com/appx/manifest/uap/windows10"
+         xmlns:rescap="http://schemas.microsoft.com/appx/manifest/foundation/windows10/restrictedcapabilities"
+         IgnorableNamespaces="uap rescap">
+  <Identity Name="AirBridge.App" Publisher="CN=AirBridge" Version="1.0.0.0"/>
+  <Properties>
+    <DisplayName>AirBridge</DisplayName>
+    <PublisherDisplayName>AirBridge</PublisherDisplayName>
+    <Logo>Assets\StoreLogo.png</Logo>
+  </Properties>
+  <Dependencies>
+    <TargetDeviceFamily Name="Windows.Desktop" MinVersion="10.0.17763.0" MaxVersionTested="10.0.19041.0"/>
+  </Dependencies>
+  <Resources>
+    <Resource Language="en-US"/>
+  </Resources>
+  <Applications>
+    <Application Id="App" Executable="$targetnametoken$.exe" EntryPoint="$targetentrypoint$">
+      <uap:VisualElements DisplayName="AirBridge"
+                          Description="Wireless file transfer and screen mirroring"
+                          BackgroundColor="transparent"
+                          Square150x150Logo="Assets\Square150x150Logo.png"
+                          Square44x44Logo="Assets\Square44x44Logo.png">
+        <uap:DefaultTile Wide310x150Logo="Assets\Wide310x150Logo.png" ShortName="AirBridge"/>
+        <uap:SplashScreen Image="Assets\SplashScreen.png"/>
+      </uap:VisualElements>
+      <Extensions>
+        <uap:Extension Category="windows.startupTask">
+          <uap:StartupTask TaskId="AirBridgeStartupTask" Enabled="false" DisplayName="AirBridge"/>
+        </uap:Extension>
+      </Extensions>
+    </Application>
+  </Applications>
+  <Capabilities>
+    <Capability Name="internetClient"/>
+    <Capability Name="privateNetworkClientServer"/>
+    <rescap:Capability Name="runFullTrust"/>
+  </Capabilities>
+</Package>

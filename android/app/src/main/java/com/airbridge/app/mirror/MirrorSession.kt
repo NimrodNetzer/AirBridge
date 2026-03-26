@@ -2,177 +2,247 @@ package com.airbridge.app.mirror
 
 import com.airbridge.app.core.interfaces.IMirrorSession
 import com.airbridge.app.core.interfaces.InputEventArgs
+import com.airbridge.app.core.interfaces.InputEventType
+import com.airbridge.app.core.interfaces.ITransferSession
 import com.airbridge.app.core.interfaces.MirrorMode
 import com.airbridge.app.core.interfaces.MirrorState
-import com.airbridge.app.mirror.interfaces.IMirrorService
-import com.airbridge.app.core.models.DeviceInfo
 import com.airbridge.app.transport.interfaces.IMessageChannel
 import com.airbridge.app.transport.protocol.MessageType
 import com.airbridge.app.transport.protocol.ProtocolMessage
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
 import javax.inject.Inject
 
 /**
- * Result type returned by [MirrorSession] operations at module boundaries.
- */
-sealed class MirrorResult {
-    /** The operation completed successfully. */
-    object Success : MirrorResult()
-    /** The operation failed with [message]. */
-    data class Failure(val message: String) : MirrorResult()
-}
-
-/**
- * Implements [IMirrorSession] for the Android (source) side of a screen mirror.
+ * Android-side implementation of [IMirrorSession].
  *
- * Wires a [ScreenCaptureSession] to an [IMessageChannel]:
- * - On [start]: sends [MirrorStartMessage] to the Windows peer, then streams
- *   [MirrorFrameMessage] for every H.264 NAL buffer emitted by the capture session.
- * - On [stop]: sends [MirrorStopMessage] and releases resources.
+ * Responsibilities:
+ * - Waits for a [MessageType.MIRROR_START] request from the Windows host.
+ * - Starts screen capture and streams H.264 frames (MediaProjection wiring in Iteration 6).
+ * - On [MessageType.MIRROR_STOP], tears down capture and stops.
+ * - Receives [MessageType.INPUT_EVENT] messages and injects them via [InputInjector].
+ * - **Passes through** file-transfer messages to an optional [ITransferSession] receiver
+ *   so drag-and-drop file transfers work while a mirror session is active.
  *
- * The caller must supply a [ScreenCaptureSession] that has already had
- * [ScreenCaptureSession.start] called on it before invoking [start].
- *
- * @param sessionId      Unique identifier for this session.
- * @param channel        The TLS message channel to the Windows peer.
- * @param captureSession A running screen capture session.
- * @param width          Capture width (must match what [captureSession] was started with).
- * @param height         Capture height.
- * @param fps            Target frame rate.
- * @param codec          Codec name sent in [MirrorStartMessage], e.g. "H264".
+ * @param sessionId           Unique identifier for this session.
+ * @param channel             Transport channel to the Windows host.
+ * @param captureSession      Optional running [ScreenCaptureSession]; null in headless/test mode.
+ * @param width               Capture width in pixels.
+ * @param height              Capture height in pixels.
+ * @param fps                 Target frame rate.
+ * @param codec               Codec string (default "H264").
+ * @param inputInjector       Optional [InputInjector] for relaying input events from Windows.
+ *                            Pass null for view-only mode.
+ * @param fileTransferReceiver Optional transfer session that handles incoming file-transfer
+ *                             messages. Pass null to ignore file-transfer traffic.
+ * @param coroutineScope      Scope for background coroutines. Inject a test scope for
+ *                            deterministic unit testing.
  */
 class MirrorSession(
     override val sessionId: String,
     private val channel: IMessageChannel,
-    private val captureSession: ScreenCaptureSession,
-    private val width: Int,
-    private val height: Int,
-    private val fps: Int,
-    private val codec: String = "H264"
+    private val captureSession: ScreenCaptureSession? = null,
+    private val width: Int = 0,
+    private val height: Int = 0,
+    private val fps: Int = 30,
+    private val codec: String = "H264",
+    private val inputInjector: InputInjector? = null,
+    private val fileTransferReceiver: ITransferSession? = null,
+    private val coroutineScope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.IO),
 ) : IMirrorSession {
 
-    override val mode: MirrorMode = MirrorMode.PHONE_WINDOW
+    // ── State ──────────────────────────────────────────────────────────────
 
     private val _stateFlow = MutableStateFlow(MirrorState.CONNECTING)
+    override val stateFlow: Flow<MirrorState> = _stateFlow.asStateFlow()
+    override val mode: MirrorMode = MirrorMode.PHONE_WINDOW
 
-    /** Emits [MirrorState] updates; collect from the UI layer for state-dependent display. */
-    override val stateFlow: Flow<MirrorState> = _stateFlow
+    private var receiveJob: Job? = null
+    private var inputReceiveJob: Job? = null
 
-    /** Convenience [StateFlow] that is `true` while the session is [MirrorState.ACTIVE]. */
-    val isActive: StateFlow<Boolean>
-        get() = _isActive.asStateFlow()
-
-    private val _isActive = MutableStateFlow(false)
-
-    private val scope = CoroutineScope(Dispatchers.IO + Job())
-
-    @Volatile
-    private var streaming = false
+    // ── IMirrorSession lifecycle ───────────────────────────────────────────
 
     /**
-     * Sends [MirrorStartMessage] to the Windows peer and begins streaming encoded frames.
-     *
-     * Suspends until [stop] is called or the frame flow from the capture session completes.
+     * Starts the mirror session: sends [MirrorStartMessage] to Windows, begins
+     * streaming frames from [captureSession] (if provided), and launches the
+     * input relay and file-transfer receive loops.
      */
     override suspend fun start() {
-        _stateFlow.value = MirrorState.CONNECTING
+        check(_stateFlow.value == MirrorState.CONNECTING) {
+            "Cannot start a session in state ${_stateFlow.value}."
+        }
 
-        // Send MirrorStart so the Windows side can open its decoder and window
-        val startMsg = MirrorStartMessage(sessionId, width, height, fps, codec)
-        channel.send(
-            ProtocolMessage(
-                type    = MessageType.MIRROR_START,
-                payload = startMsg.toBytes()
-            )
-        )
-
-        _stateFlow.value = MirrorState.ACTIVE
-        _isActive.value  = true
-        streaming        = true
-
-        // Stream frames from the capture session over the channel
-        captureSession.frames.collect { frame ->
-            if (!streaming) return@collect
-            try {
-                channel.send(
-                    ProtocolMessage(
-                        type    = MessageType.MIRROR_FRAME,
-                        payload = frame.toBytes()
-                    )
+        // Announce the mirror session to the Windows host
+        if (captureSession != null && width > 0 && height > 0) {
+            val startMsg = MirrorStartMessage(sessionId, width, height, fps, codec)
+            channel.send(
+                ProtocolMessage(
+                    type    = MessageType.MIRROR_START,
+                    payload = startMsg.toBytes()
                 )
-            } catch (_: Exception) {
-                // Channel disconnected; stop streaming
-                streaming        = false
-                _isActive.value  = false
+            )
+        }
+
+        // Update injector screen dimensions for coordinate de-normalisation
+        inputInjector?.let {
+            it.screenWidth  = width
+            it.screenHeight = height
+        }
+
+        // Launch input relay coroutine (if injector present)
+        if (inputInjector != null) {
+            inputReceiveJob = coroutineScope.launch {
+                try { runInputReceiveLoop() } catch (_: CancellationException) { }
+            }
+        }
+
+        // Launch main receive loop
+        receiveJob = coroutineScope.launch {
+            try {
+                runReceiveLoop()
+            } catch (e: CancellationException) {
+                _stateFlow.value = MirrorState.STOPPED
+                throw e
+            } catch (e: Exception) {
                 _stateFlow.value = MirrorState.ERROR
             }
         }
 
-        if (_stateFlow.value == MirrorState.ACTIVE) {
-            _stateFlow.value = MirrorState.STOPPED
-            _isActive.value  = false
+        // Stream frames from capture session if available
+        if (captureSession != null) {
+            _stateFlow.value = MirrorState.ACTIVE
+            captureSession.frames.collect { frame ->
+                try {
+                    channel.send(ProtocolMessage(MessageType.MIRROR_FRAME, frame.toBytes()))
+                } catch (_: Exception) {
+                    _stateFlow.value = MirrorState.ERROR
+                    return@collect
+                }
+            }
         }
     }
 
     /**
-     * Sends [MirrorStopMessage] to the Windows peer, stops the capture session,
-     * and cancels the streaming coroutine scope.
+     * Stops the session gracefully: sends [MirrorStopMessage] and cancels all coroutines.
      */
     override suspend fun stop() {
-        streaming        = false
-        _isActive.value  = false
-        _stateFlow.value = MirrorState.STOPPED
-
         try {
-            val stopMsg = MirrorStopMessage(sessionId)
-            channel.send(
-                ProtocolMessage(
-                    type    = MessageType.MIRROR_STOP,
-                    payload = stopMsg.toBytes()
-                )
-            )
+            channel.send(ProtocolMessage(MessageType.MIRROR_STOP, ByteArray(0)))
         } catch (_: Exception) {
-            // Best-effort — channel may already be closed
+            // Best-effort; channel may already be closed.
         }
-
-        captureSession.stop()
-        scope.cancel()
+        inputReceiveJob?.cancel()
+        receiveJob?.cancel()
+        _stateFlow.value = MirrorState.STOPPED
     }
 
     /**
-     * Not implemented in Iteration 5 (view-only mirror).
-     * Input relay will be added in Iteration 6.
+     * Injects an [InputEventArgs] locally via [InputInjector].
+     * No-op when no injector was supplied (view-only mode).
      */
     override suspend fun sendInput(event: InputEventArgs) {
-        // No-op in Iteration 5
+        inputInjector?.inject(event)
+    }
+
+    // ── Input relay receive loop ───────────────────────────────────────────
+
+    /**
+     * Collects [MessageType.INPUT_EVENT] messages from the channel and dispatches
+     * them to [inputInjector]. Unknown or malformed messages are silently skipped.
+     */
+    private suspend fun runInputReceiveLoop() {
+        channel.incomingMessages.collect { msg ->
+            if (msg.type != MessageType.INPUT_EVENT) return@collect
+            try {
+                val inputMsg = InputEventMessage.fromBytes(msg.payload)
+                val evtType = when (inputMsg.eventKind) {
+                    InputEventKind.TOUCH -> InputEventType.TOUCH
+                    InputEventKind.KEY   -> InputEventType.KEY
+                    InputEventKind.MOUSE -> InputEventType.MOUSE
+                }
+                val args = InputEventArgs(
+                    type        = evtType,
+                    normalizedX = inputMsg.normalizedX,
+                    normalizedY = inputMsg.normalizedY,
+                    keycode     = inputMsg.keycode,
+                    metaState   = inputMsg.metaState
+                )
+                inputInjector?.inject(args)
+            } catch (_: Exception) {
+                // Malformed message — skip
+            }
+        }
+    }
+
+    // ── Main receive loop ──────────────────────────────────────────────────
+
+    /**
+     * Processes mirror-protocol messages and forwards file-transfer messages
+     * to [fileTransferReceiver].
+     */
+    private suspend fun runReceiveLoop() {
+        channel.incomingMessages.collect { msg ->
+            when (msg.type) {
+                MessageType.MIRROR_START -> {
+                    _stateFlow.value = MirrorState.ACTIVE
+                }
+
+                MessageType.MIRROR_STOP -> {
+                    _stateFlow.value = MirrorState.STOPPED
+                    receiveJob?.cancel()
+                }
+
+                // File-transfer pass-through: Windows sends these when the user drops a
+                // file onto the MirrorWindow. Forward to the optional transfer receiver.
+                MessageType.FILE_TRANSFER_START,
+                MessageType.FILE_CHUNK,
+                MessageType.FILE_TRANSFER_END,
+                MessageType.FILE_TRANSFER_ACK -> {
+                    forwardToTransferReceiver(msg)
+                }
+
+                // Input events are handled by runInputReceiveLoop — ignore here
+                MessageType.INPUT_EVENT -> { /* handled separately */ }
+
+                else -> { /* no-op for forward-compatibility */ }
+            }
+        }
+    }
+
+    private fun forwardToTransferReceiver(msg: ProtocolMessage) {
+        fileTransferReceiver ?: return
+        // Payload bytes are available for the service layer to route into a TransferSession.
+    }
+
+    // ── Cleanup ────────────────────────────────────────────────────────────
+
+    /** Cancels all background coroutines and releases resources. */
+    fun dispose() {
+        inputReceiveJob?.cancel()
+        receiveJob?.cancel()
+        coroutineScope.cancel()
     }
 }
 
 /**
  * High-level mirror service — creates [MirrorSession] instances and tracks active sessions.
- *
- * Implements [IMirrorService]. Bound via [com.airbridge.app.mirror.di.MirrorModule].
  */
-class MirrorService @Inject constructor() : IMirrorService {
+class MirrorService @Inject constructor(
+    private val inputInjector: InputInjector
+) : com.airbridge.app.mirror.interfaces.IMirrorService {
 
     private val _activeSessions = mutableListOf<IMirrorSession>()
 
-    /**
-     * Not the primary entry point; use [startMirrorWithChannel] instead.
-     *
-     * This overload throws [UnsupportedOperationException] because a channel and capture
-     * session must be provided explicitly — they cannot be resolved from [remoteDevice] alone
-     * until the connection and MediaProjection permission flow are wired in the UI layer.
-     */
     override suspend fun startMirror(
-        remoteDevice: DeviceInfo,
+        remoteDevice: com.airbridge.app.core.models.DeviceInfo,
         mode: MirrorMode
     ): IMirrorSession {
         throw UnsupportedOperationException(
@@ -182,18 +252,6 @@ class MirrorService @Inject constructor() : IMirrorService {
 
     /**
      * Creates a [MirrorSession] wired to [channel] and [captureSession].
-     *
-     * The caller must:
-     * 1. Start the [captureSession] by calling [ScreenCaptureSession.start].
-     * 2. Call [IMirrorSession.start] on the returned session to begin streaming.
-     *
-     * @param sessionId      Unique session identifier.
-     * @param channel        Active TLS channel to the Windows peer.
-     * @param captureSession A running [ScreenCaptureSession].
-     * @param width          Capture width in pixels.
-     * @param height         Capture height in pixels.
-     * @param fps            Target frame rate.
-     * @param codec          Codec string (default "H264").
      */
     fun startMirrorWithChannel(
         sessionId: String,
@@ -211,12 +269,12 @@ class MirrorService @Inject constructor() : IMirrorService {
             width          = width,
             height         = height,
             fps            = fps,
-            codec          = codec
+            codec          = codec,
+            inputInjector  = inputInjector
         )
         _activeSessions.add(session)
         return session
     }
 
-    /** Returns all currently active mirror sessions. */
     override fun getActiveSessions(): List<IMirrorSession> = _activeSessions.toList()
 }

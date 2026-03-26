@@ -15,6 +15,9 @@
     <!-- Screen capture (used by mirror module) -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
 
+    <!-- Notifications (transfer progress, API 33+) -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
     <!-- File access -->
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"
         android:maxSdkVersion="32" />
@@ -32,12 +35,41 @@
         <activity
             android:name=".ui.MainActivity"
             android:exported="true"
+            android:theme="@style/Theme.AirBridge"
             android:windowSoftInputMode="adjustResize">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!--
+          Accessibility service used for touch/key injection during phone-mirror input relay.
+          The user must enable it manually in Settings → Accessibility → AirBridge.
+          canPerformGestures="true" is required for GestureDescription dispatch.
+          canRetrieveWindowContent is intentionally false — we do not read screen content.
+        -->
+        <service
+            android:name=".mirror.AirBridgeAccessibilityService"
+            android:exported="true"
+            android:label="@string/app_name"
+            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
+            <intent-filter>
+                <action android:name="android.accessibilityservice.AccessibilityService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.accessibilityservice"
+                android:resource="@xml/accessibility_service_config" />
+        </service>
+
+        <!-- Tablet as Second Monitor: full-screen H.264 renderer (Windows → Android) -->
+        <activity
+            android:name=".display.TabletDisplayActivity"
+            android:exported="false"
+            android:screenOrientation="landscape"
+            android:theme="@android:style/Theme.NoTitleBar.Fullscreen"
+            android:configChanges="orientation|screenSize|keyboardHidden"
+            android:launchMode="singleTask" />
 
     </application>
 
