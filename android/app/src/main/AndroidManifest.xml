@@ -15,6 +15,9 @@
     <!-- Screen capture (used by mirror module) -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
 
+    <!-- Notifications (transfer progress, API 33+) -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
     <!-- File access -->
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"
         android:maxSdkVersion="32" />
@@ -32,6 +35,7 @@
         <activity
             android:name=".ui.MainActivity"
             android:exported="true"
+            android:theme="@style/Theme.AirBridge"
             android:windowSoftInputMode="adjustResize">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />

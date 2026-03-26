@@ -1,6 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <!--
+      Bridge theme: MaterialComponents parent allows the Views-based TabletDisplayActivity
+      to continue working while Compose Material 3 handles all other screens via AirBridgeTheme.
+    -->
     <style name="Theme.AirBridge" parent="Theme.MaterialComponents.DayNight.NoActionBar">
-        <!-- Colors and theming defined in later iterations -->
+        <!-- Compose theming is applied programmatically via AirBridgeTheme (Material 3). -->
     </style>
 </resources>
