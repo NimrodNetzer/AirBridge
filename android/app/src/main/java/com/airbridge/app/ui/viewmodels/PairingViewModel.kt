@@ -6,7 +6,6 @@ import com.airbridge.app.core.interfaces.IDeviceRegistry
 import com.airbridge.app.core.interfaces.IPairingService
 import com.airbridge.app.core.interfaces.PairingResult
 import com.airbridge.app.core.models.DeviceInfo
-import com.airbridge.app.core.pairing.PairingService
 import com.airbridge.app.transport.interfaces.IConnectionManager
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Job
@@ -44,7 +43,7 @@ class PairingViewModel @Inject constructor(
     private var pairingJob: Job? = null
 
     /**
-     * Looks up [deviceId] in the registry and starts the pairing handshake.
+     * Looks up [deviceId] in the registry and starts the outbound pairing handshake.
      * If the device is not found, transitions immediately to [PairingState.Failed].
      */
     fun startPairing(deviceId: String) {
@@ -67,32 +66,72 @@ class PairingViewModel @Inject constructor(
             try {
                 val channel = connectionManager.connect(device)
 
-                // Observe the PIN flow from the concrete PairingService if available.
-                if (pairingService is PairingService) {
-                    val pinObserverJob = launch {
-                        pairingService.pinFlow.collect { pin ->
-                            if (pin != null) {
-                                _pairingState.value = PairingState.WaitingForPin(pin)
-                            }
+                // Observe the PIN flow via the interface — no concrete cast needed.
+                val pinObserverJob = launch {
+                    pairingService.pinFlow.collect { pin ->
+                        if (pin != null) {
+                            _pairingState.value = PairingState.WaitingForPin(pin)
                         }
                     }
-
-                    val result = pairingService.requestPairingOnChannel(device, channel)
-                    pinObserverJob.cancel()
-
-                    handleResult(result)
-                } else {
-                    // Fallback: use interface-level method
-                    val result = pairingService.requestPairing(device)
-                    handleResult(result)
                 }
+
+                val result = pairingService.requestPairingOnChannel(device, channel)
+                pinObserverJob.cancel()
+
+                handleResult(result, device)
             } catch (e: Exception) {
                 _pairingState.value = PairingState.Failed(e.message ?: "Unknown error")
             }
         }
     }
 
-    private fun handleResult(result: PairingResult) {
+    /**
+     * Called when the Windows side initiates pairing to this Android device.
+     * The [DeviceConnectionService] has already read the first message and determined it is a
+     * PAIRING_REQUEST; this method drives the inbound handshake to completion and updates
+     * [pairingState] accordingly.
+     */
+    fun handleIncomingPairingRequest(device: DeviceInfo, channel: com.airbridge.app.transport.interfaces.IMessageChannel) {
+        if (_pairingState.value is PairingState.Connecting ||
+            _pairingState.value is PairingState.WaitingForPin
+        ) return
+
+        _pairingState.value = PairingState.Connecting
+
+        pairingJob = viewModelScope.launch {
+            try {
+                // Observe the PIN emitted by acceptPairingOnChannel so the UI can display it.
+                val pinObserverJob = launch {
+                    pairingService.pinFlow.collect { pin ->
+                        if (pin != null) {
+                            _pairingState.value = PairingState.WaitingForPin(pin)
+                        }
+                    }
+                }
+
+                val result = pairingService.acceptPairingOnChannel(device, channel)
+                pinObserverJob.cancel()
+
+                handleResult(result, device)
+            } catch (e: Exception) {
+                _pairingState.value = PairingState.Failed(e.message ?: "Unknown error")
+            }
+        }
+    }
+
+    /**
+     * Confirms or rejects the currently displayed PIN for an inbound pairing request.
+     * Must be called after [pairingState] has transitioned to [PairingState.WaitingForPin]
+     * during an inbound flow started by [handleIncomingPairingRequest].
+     */
+    fun acceptIncomingPairing(accepted: Boolean) {
+        viewModelScope.launch {
+            pairingService.confirmPairing(accepted)
+        }
+    }
+
+    private fun handleResult(result: PairingResult, device: DeviceInfo) {
+        deviceRegistry.addOrUpdate(device.copy(isPaired = result == PairingResult.SUCCESS || result == PairingResult.ALREADY_PAIRED))
         _pairingState.value = when (result) {
             PairingResult.SUCCESS -> PairingState.Success
             PairingResult.ALREADY_PAIRED -> PairingState.Success

@@ -1,3 +1,4 @@
+using System.Buffers.Binary;
 using AirBridge.Core.Interfaces;
 using AirBridge.Core.Models;
 using AirBridge.Core.Pairing;
@@ -62,48 +63,77 @@ public sealed class PairingCoordinator
     }
 
     // ── Wire format helpers ────────────────────────────────────────────────
+    //
+    // All multi-byte integers are written in big-endian (network byte order) to match
+    // Java's DataOutputStream / DataInputStream used on the Android side.
+    // BinaryWriter/BinaryReader are little-endian by default, so we use BinaryPrimitives
+    // for the 16-bit key-length field instead.
 
+    /// <summary>
+    /// Builds the PAIRING_REQUEST payload.
+    /// Wire format: [ushort BE key length][key bytes][6 ASCII PIN bytes]
+    /// Matches Android PairingService.buildRequestPayload():
+    ///   dos.writeShort(key.size) → dos.write(key) → dos.write(pin ASCII)
+    /// </summary>
     public static byte[] BuildRequestPayload(byte[] localPublicKey, string pin)
     {
-        using var ms = new System.IO.MemoryStream();
-        using var bw = new System.IO.BinaryWriter(ms);
-        bw.Write((ushort)localPublicKey.Length);
-        bw.Write(localPublicKey);
-        bw.Write(System.Text.Encoding.ASCII.GetBytes(pin));
+        var ms = new System.IO.MemoryStream();
+        // Write key length as 2 bytes big-endian
+        var lenBuf = new byte[2];
+        BinaryPrimitives.WriteUInt16BigEndian(lenBuf, (ushort)localPublicKey.Length);
+        ms.Write(lenBuf, 0, 2);
+        ms.Write(localPublicKey, 0, localPublicKey.Length);
+        var pinBytes = System.Text.Encoding.ASCII.GetBytes(pin);
+        ms.Write(pinBytes, 0, pinBytes.Length);
         return ms.ToArray();
     }
 
+    /// <summary>
+    /// Builds the PAIRING_RESPONSE payload.
+    /// Wire format: [1 byte accepted][ushort BE key length][key bytes]
+    /// Matches Android PairingService.buildResponsePayload():
+    ///   dos.writeBoolean(accepted) → dos.writeShort(key.size) → dos.write(key)
+    /// </summary>
     public static byte[] BuildResponsePayload(bool accepted, byte[] localPublicKey)
     {
-        using var ms = new System.IO.MemoryStream();
-        using var bw = new System.IO.BinaryWriter(ms);
-        bw.Write(accepted);
-        bw.Write((ushort)localPublicKey.Length);
-        bw.Write(localPublicKey);
+        var ms = new System.IO.MemoryStream();
+        ms.WriteByte(accepted ? (byte)1 : (byte)0);
+        var lenBuf = new byte[2];
+        BinaryPrimitives.WriteUInt16BigEndian(lenBuf, (ushort)localPublicKey.Length);
+        ms.Write(lenBuf, 0, 2);
+        ms.Write(localPublicKey, 0, localPublicKey.Length);
         return ms.ToArray();
     }
 
+    /// <summary>
+    /// Parses a PAIRING_RESPONSE payload from Android.
+    /// Android writes: [1 byte boolean][ushort BE key length][key bytes]
+    /// </summary>
     public static (bool Accepted, byte[] RemoteKey) ParseResponsePayload(byte[] payload)
     {
         try
         {
-            using var ms = new System.IO.MemoryStream(payload);
-            using var br = new System.IO.BinaryReader(ms);
-            var accepted = br.ReadBoolean();
-            var keyLen = br.ReadUInt16();
-            var key = br.ReadBytes(keyLen);
+            if (payload.Length < 3) return (false, Array.Empty<byte>());
+            var accepted = payload[0] != 0;
+            var keyLen = BinaryPrimitives.ReadUInt16BigEndian(payload.AsSpan(1, 2));
+            if (payload.Length < 3 + keyLen) return (false, Array.Empty<byte>());
+            var key = payload[3..(3 + keyLen)];
             return (accepted, key);
         }
         catch { return (false, Array.Empty<byte>()); }
     }
 
+    /// <summary>
+    /// Parses a PAIRING_REQUEST payload from Android.
+    /// Android writes: [ushort BE key length][key bytes][6 ASCII PIN bytes]
+    /// </summary>
     public static (byte[] PublicKey, string Pin) ParseRequestPayload(byte[] payload)
     {
-        using var ms = new System.IO.MemoryStream(payload);
-        using var br = new System.IO.BinaryReader(ms);
-        var keyLen = br.ReadUInt16();
-        var key = br.ReadBytes(keyLen);
-        var pin = System.Text.Encoding.ASCII.GetString(br.ReadBytes(6));
+        if (payload.Length < 2) throw new ArgumentException("Payload too short.", nameof(payload));
+        var keyLen = BinaryPrimitives.ReadUInt16BigEndian(payload.AsSpan(0, 2));
+        if (payload.Length < 2 + keyLen + 6) throw new ArgumentException("Payload too short for key + PIN.", nameof(payload));
+        var key = payload[2..(2 + keyLen)];
+        var pin = System.Text.Encoding.ASCII.GetString(payload, 2 + keyLen, 6);
         return (key, pin);
     }
 }
