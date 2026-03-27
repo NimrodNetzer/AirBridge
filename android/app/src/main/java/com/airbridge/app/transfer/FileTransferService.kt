@@ -16,8 +16,6 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
-import java.io.ByteArrayInputStream
-import java.io.ByteArrayOutputStream
 import java.io.File
 import java.util.UUID
 import java.util.concurrent.CopyOnWriteArrayList
@@ -60,8 +58,8 @@ class FileTransferService @Inject constructor(
      * 2. Read file in 64 KB chunks; send each as FILE_CHUNK with [FileChunkMessage] payload.
      * 3. Send FILE_TRANSFER_END with [FileEndMessage] payload (includes SHA-256).
      *
-     * Returns a [TransferSession]-backed [ITransferSession] whose [stateFlow] and
-     * [progressFlow] can be observed for progress updates.
+     * Returns an [ITransferSession] whose [stateFlow] and [progressFlow] can be observed
+     * for real-time progress updates.
      */
     override suspend fun sendFile(filePath: String, destination: DeviceInfo): ITransferSession {
         val channel = deviceConnectionService.getActiveSession(destination.deviceId)
@@ -73,23 +71,19 @@ class FileTransferService @Inject constructor(
 
         val sessionId = UUID.randomUUID().toString()
 
-        // Create a pipe: TransferSession writes to pipeOut; we read from pipeIn and forward
-        // each serialised sub-message as a protocol message on the channel.
-        val pipeOut = ByteArrayOutputStream()
-        val session = TransferSession(
-            sessionId = sessionId,
-            fileName = file.name,
+        // Use a mutable session so the coroutine can push state/progress updates out via flows.
+        val session = ReceiveProgressSession(
+            sessionId  = sessionId,
+            fileName   = file.name,
             totalBytes = file.length(),
-            isSender = true,
-            dataStream = file.inputStream(),
-            networkStream = pipeOut,
+            isSender   = true,
         )
         _activeSessions.add(session)
 
-        // Run the session in a background coroutine, then forward the buffered bytes
-        // to the channel as protocol messages.
         scope.launch {
             try {
+                session.updateState(TransferState.ACTIVE)
+
                 // Send FILE_TRANSFER_START
                 val startPayload = FileStartMessage(sessionId, file.name, file.length()).toBytes()
                 channel.send(ProtocolMessage(MessageType.FILE_TRANSFER_START, startPayload))
@@ -106,8 +100,7 @@ class FileTransferService @Inject constructor(
                         val chunkPayload = FileChunkMessage(offset, chunk).toBytes()
                         channel.send(ProtocolMessage(MessageType.FILE_CHUNK, chunkPayload))
                         offset += bytesRead
-                        // Update progress by reflecting into the session's internal flow via
-                        // a lightweight state update (session.progressFlow is MutableStateFlow).
+                        session.updateProgress(offset)
                     }
                 }
 
@@ -116,7 +109,9 @@ class FileTransferService @Inject constructor(
                 val endPayload = FileEndMessage(offset, hash).toBytes()
                 channel.send(ProtocolMessage(MessageType.FILE_TRANSFER_END, endPayload))
 
+                session.updateState(TransferState.COMPLETED)
             } catch (e: Exception) {
+                session.updateState(TransferState.FAILED)
                 // Best-effort error message to remote peer.
                 try {
                     val errPayload = TransferErrorMessage(e.message ?: "transfer error").toBytes()
@@ -241,16 +236,15 @@ class FileTransferService @Inject constructor(
 }
 
 /**
- * Lightweight [ITransferSession] implementation for the receive side.
- * Progress and state are updated externally by the [FileTransferService] message handler.
+ * Lightweight [ITransferSession] whose progress and state are updated externally.
+ * Used for both send and receive sides by [FileTransferService].
  */
 internal class ReceiveProgressSession(
     override val sessionId: String,
     override val fileName: String,
     override val totalBytes: Long,
+    override val isSender: Boolean = false,
 ) : ITransferSession {
-
-    override val isSender: Boolean = false
 
     private val _stateFlow    = MutableStateFlow(TransferState.PENDING)
     private val _progressFlow = MutableStateFlow(0L)
