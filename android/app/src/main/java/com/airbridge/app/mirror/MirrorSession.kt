@@ -252,6 +252,15 @@ class MirrorService @Inject constructor(
         remoteDevice: com.airbridge.app.core.models.DeviceInfo,
         mode: MirrorMode
     ): IMirrorSession {
+        // For TABLET_DISPLAY the session lifecycle is owned by TabletDisplayActivity (it
+        // creates TabletDisplaySession once the SurfaceView surface is ready). Return a
+        // lightweight stub so callers can observe state transitions without crashing.
+        // For PHONE_WINDOW a channel + capture session are required; use startMirrorWithChannel().
+        if (mode == MirrorMode.TABLET_DISPLAY) {
+            val stub = TabletDisplayStubSession()
+            _activeSessions.add(stub)
+            return stub
+        }
         throw UnsupportedOperationException(
             "Use startMirrorWithChannel() — a message channel and capture session are required."
         )
@@ -284,4 +293,23 @@ class MirrorService @Inject constructor(
     }
 
     override fun getActiveSessions(): List<IMirrorSession> = _activeSessions.toList()
+}
+
+/**
+ * Lightweight stub session returned by [MirrorService.startMirror] for
+ * [MirrorMode.TABLET_DISPLAY]. The real session is created inside
+ * [com.airbridge.app.display.TabletDisplayActivity] once the SurfaceView
+ * surface is available. This stub lets [com.airbridge.app.ui.viewmodels.MirrorViewModel]
+ * observe state without holding a reference to the actual MediaCodec session.
+ */
+private class TabletDisplayStubSession : IMirrorSession {
+    override val sessionId: String = "tablet-display-stub-${System.currentTimeMillis()}"
+    override val mode: MirrorMode  = MirrorMode.TABLET_DISPLAY
+
+    private val _stateFlow = MutableStateFlow(MirrorState.ACTIVE)
+    override val stateFlow: Flow<MirrorState> = _stateFlow.asStateFlow()
+
+    override suspend fun start()  { /* no-op: real session lives in TabletDisplayActivity */ }
+    override suspend fun stop()   { _stateFlow.value = MirrorState.STOPPED }
+    override suspend fun sendInput(event: InputEventArgs) { /* no-op */ }
 }

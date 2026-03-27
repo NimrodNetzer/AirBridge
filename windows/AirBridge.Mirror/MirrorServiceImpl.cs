@@ -34,6 +34,9 @@ public sealed class MirrorServiceImpl : IMirrorService
 
     /// <summary>
     /// Starts a mirror session on an already-established message channel.
+    /// For <see cref="MirrorMode.PhoneWindow"/> the Windows side receives frames and renders
+    /// them in a floating window. For <see cref="MirrorMode.TabletDisplay"/> the Windows side
+    /// is the source — it streams the IddCx virtual display to the Android tablet.
     /// </summary>
     public Task<IMirrorSession> StartMirrorWithChannelAsync(
         IMessageChannel channel,
@@ -43,7 +46,13 @@ public sealed class MirrorServiceImpl : IMirrorService
         ArgumentNullException.ThrowIfNull(channel);
 
         var sessionId = Guid.NewGuid().ToString("N");
-        var session   = new MirrorSession(sessionId, channel);
+
+        IMirrorSession session = mode switch
+        {
+            MirrorMode.TabletDisplay => new TabletDisplaySession(sessionId, channel),
+            _                        => new MirrorSession(sessionId, channel),
+        };
+
         _sessions[sessionId] = session;
 
         // Start is fire-and-forget — caller holds the session reference
@@ -53,7 +62,7 @@ public sealed class MirrorServiceImpl : IMirrorService
             session.Dispose();
         }, TaskContinuationOptions.OnlyOnRanToCompletion | TaskContinuationOptions.ExecuteSynchronously);
 
-        return Task.FromResult<IMirrorSession>(session);
+        return Task.FromResult(session);
     }
 
     /// <inheritdoc/>
