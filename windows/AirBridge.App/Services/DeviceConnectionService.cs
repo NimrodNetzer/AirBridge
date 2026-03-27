@@ -29,6 +29,27 @@ public sealed class DeviceConnectionService : IDisposable
 
     private readonly ConcurrentDictionary<string, IMessageChannel> _activeSessions = new();
 
+    // ── Message dispatcher ──────────────────────────────────────────────────
+
+    private readonly ConcurrentDictionary<string, List<Func<ProtocolMessage, Task>>> _messageHandlers = new();
+
+    /// <summary>
+    /// Registers a handler that will be invoked for every incoming message on the active session
+    /// for <paramref name="deviceId"/>. Multiple handlers may be registered per device; all are
+    /// called in registration order for each message.
+    /// </summary>
+    public void AddMessageHandler(string deviceId, Func<ProtocolMessage, Task> handler)
+    {
+        _messageHandlers.AddOrUpdate(
+            deviceId,
+            _ => new List<Func<ProtocolMessage, Task>> { handler },
+            (_, existing) => { lock (existing) { existing.Add(handler); return existing; } });
+    }
+
+    /// <summary>Removes all message handlers for <paramref name="deviceId"/>.</summary>
+    public void RemoveMessageHandlers(string deviceId)
+        => _messageHandlers.TryRemove(deviceId, out _);
+
     /// <summary>
     /// Returns the active <see cref="IMessageChannel"/> for <paramref name="deviceId"/>,
     /// or <see langword="null"/> if no session is currently open for that device.
@@ -159,15 +180,22 @@ public sealed class DeviceConnectionService : IDisposable
     {
         try
         {
-            // Drain incoming messages until the channel closes cleanly (null) or throws.
             while (true)
             {
                 var msg = await channel.ReceiveAsync().ConfigureAwait(false);
-                if (msg is null)
-                    break; // clean close
-                // Messages received here are non-pairing messages (e.g. Ping/Pong).
-                // Feature services (transfer, mirror) should register their own receive
-                // loop on the channel; this loop just keeps the session alive.
+                if (msg is null) break; // clean close
+
+                // Dispatch to all registered handlers for this device.
+                if (_messageHandlers.TryGetValue(deviceId, out var handlers))
+                {
+                    List<Func<ProtocolMessage, Task>> snapshot;
+                    lock (handlers) { snapshot = handlers.ToList(); }
+                    foreach (var handler in snapshot)
+                    {
+                        try { await handler(msg).ConfigureAwait(false); }
+                        catch { /* misbehaving handler must not kill dispatch loop */ }
+                    }
+                }
             }
         }
         catch
@@ -176,9 +204,8 @@ public sealed class DeviceConnectionService : IDisposable
         }
         finally
         {
-            // Only remove if this is still the registered session for the device
-            // (a reconnect may have replaced it).
             _activeSessions.TryRemove(new KeyValuePair<string, IMessageChannel>(deviceId, channel));
+            _messageHandlers.TryRemove(deviceId, out _);
             DeviceDisconnected?.Invoke(this, deviceId);
         }
     }

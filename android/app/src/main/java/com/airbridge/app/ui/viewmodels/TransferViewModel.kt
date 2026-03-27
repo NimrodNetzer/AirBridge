@@ -8,6 +8,7 @@ import androidx.lifecycle.viewModelScope
 import com.airbridge.app.core.DeviceConnectionService
 import com.airbridge.app.core.interfaces.IDeviceRegistry
 import com.airbridge.app.core.interfaces.TransferState
+import com.airbridge.app.transfer.FileTransferService
 import com.airbridge.app.transfer.TransferNotificationManager
 import com.airbridge.app.transfer.interfaces.IFileTransferService
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -60,11 +61,24 @@ class TransferViewModel @Inject constructor(
     private val _connectedDeviceId = MutableStateFlow<String?>(null)
     val connectedDeviceId: StateFlow<String?> = _connectedDeviceId.asStateFlow()
 
+    /** Tracks which device IDs we have already registered a receive handler for. */
+    private val _handlerRegisteredFor = mutableSetOf<String>()
+
     init {
         // Observe connected device IDs from the session manager and surface the first one.
+        // Also register the inbound file-transfer handler when a new device connects.
         viewModelScope.launch {
             deviceConnectionService.connectedDeviceIds.collect { ids ->
                 _connectedDeviceId.value = ids.firstOrNull()
+
+                // Register receive handler for any newly connected device.
+                if (transferService is FileTransferService) {
+                    for (id in ids) {
+                        if (_handlerRegisteredFor.add(id)) {
+                            transferService.registerReceiveHandler(id)
+                        }
+                    }
+                }
             }
         }
     }

@@ -57,7 +57,8 @@ fun TransferScreen(
     navController: NavController,
     viewModel: TransferViewModel = hiltViewModel(),
 ) {
-    val sessions by viewModel.activeSessions.collectAsStateWithLifecycle()
+    val sessions         by viewModel.activeSessions.collectAsStateWithLifecycle()
+    val connectedDevice  by viewModel.connectedDeviceId.collectAsStateWithLifecycle()
 
     val filePicker = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent(),
@@ -69,10 +70,23 @@ fun TransferScreen(
         topBar = {
             TopAppBar(
                 title = {
-                    Text(
-                        text = "File Transfer",
-                        style = MaterialTheme.typography.headlineMedium,
-                    )
+                    Column {
+                        Text(
+                            text = "File Transfer",
+                            style = MaterialTheme.typography.headlineMedium,
+                        )
+                        Text(
+                            text = if (connectedDevice != null)
+                                "Connected to: $connectedDevice"
+                            else
+                                "No device connected",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = if (connectedDevice != null)
+                                MaterialTheme.colorScheme.primary
+                            else
+                                MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
                 },
             )
         },
