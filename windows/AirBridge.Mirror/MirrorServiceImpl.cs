@@ -81,6 +81,9 @@ public sealed class MirrorServiceImpl : IMirrorService
 
     /// <summary>
     /// Starts a mirror session on an already-established message channel.
+    /// For <see cref="MirrorMode.PhoneWindow"/> the Windows side receives frames and renders
+    /// them in a floating window. For <see cref="MirrorMode.TabletDisplay"/> the Windows side
+    /// is the source — it streams the IddCx virtual display to the Android tablet.
     /// </summary>
     /// <param name="channel">The authenticated TLS channel to the Android device.</param>
     /// <param name="mode">

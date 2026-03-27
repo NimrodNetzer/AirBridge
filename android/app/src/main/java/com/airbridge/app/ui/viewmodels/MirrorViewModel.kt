@@ -129,9 +129,18 @@ class MirrorViewModel @Inject constructor(
      * then starts a [MirrorMode.TABLET_DISPLAY] session to [device].
      */
     fun startTabletDisplay(device: DeviceInfo) {
+        // Retrieve the active channel before launching the activity.
+        // TabletDisplayActivity reads pendingChannel in onCreate() and finishes if null.
+        val channel = deviceConnectionService.getActiveSession(device.deviceId)
+        if (channel == null) {
+            _mirrorState.value = MirrorUiState.Error("No active connection to ${device.deviceId}")
+            return
+        }
+        TabletDisplayActivity.pendingChannel = channel
+
         val intent = Intent(context, TabletDisplayActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_NEW_TASK
-            putExtra("deviceId", device.deviceId)
+            putExtra(TabletDisplayActivity.EXTRA_SESSION_ID, "tablet-${device.deviceId}")
         }
         context.startActivity(intent)
 

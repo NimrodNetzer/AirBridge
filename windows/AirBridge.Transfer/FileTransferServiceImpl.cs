@@ -74,12 +74,15 @@ public sealed class FileTransferServiceImpl : IFileTransferService, IDisposable
         var sessionId = Guid.NewGuid().ToString("N");
         var session   = new TransferProgressSession(sessionId, info.Name, info.Length, isSender: true);
         _sessions[sessionId] = session;
-        session.UpdateState(TransferState.Active);
 
         _ = Task.Run(async () =>
         {
             try
             {
+                // Transition to Active inside the task so the caller can subscribe to
+                // StateChanged/ProgressChanged before the first event fires.
+                session.UpdateState(TransferState.Active);
+
                 // 1. FILE_TRANSFER_START
                 var startBytes = new FileStartMessage(sessionId, info.Name, info.Length).ToBytes();
                 await channel.SendAsync(

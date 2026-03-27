@@ -47,7 +47,6 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavController
 import com.airbridge.app.core.models.DeviceInfo
-import com.airbridge.app.core.models.DeviceType
 import com.airbridge.app.ui.viewmodels.MirrorUiState
 import com.airbridge.app.ui.viewmodels.MirrorViewModel
 import kotlinx.coroutines.flow.filterNotNull
@@ -63,8 +62,8 @@ fun MirrorScreen(
     navController: NavController,
     viewModel: MirrorViewModel = hiltViewModel(),
 ) {
-    val mirrorState           by viewModel.mirrorState.collectAsStateWithLifecycle()
-    val pendingProjectionReq  by viewModel.pendingProjectionRequest.collectAsStateWithLifecycle()
+    val mirrorState          by viewModel.mirrorState.collectAsStateWithLifecycle()
+    val pendingProjectionReq by viewModel.pendingProjectionRequest.collectAsStateWithLifecycle()
 
     // Launcher for the MediaProjection permission dialog.
     val projectionLauncher = rememberLauncherForActivityResult(
@@ -139,21 +138,23 @@ fun MirrorScreen(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
             ) {
+                val canStart = (mirrorState is MirrorUiState.Idle || mirrorState is MirrorUiState.Error)
+                    && connectedDevice != null
                 MirrorModeCard(
                     modifier = Modifier.weight(1f),
                     icon = Icons.Default.PhoneAndroid,
                     title = "Phone Window",
                     description = "Mirror your phone on PC",
-                    enabled = mirrorState is MirrorUiState.Idle || mirrorState is MirrorUiState.Error,
-                    onStart = { viewModel.startPhoneWindow(placeholderDevice) },
+                    enabled = canStart,
+                    onStart = { connectedDevice?.let { viewModel.startPhoneWindow(it) } },
                 )
                 MirrorModeCard(
                     modifier = Modifier.weight(1f),
                     icon = Icons.Default.Tablet,
                     title = "Tablet Display",
                     description = "Use as second monitor",
-                    enabled = mirrorState is MirrorUiState.Idle || mirrorState is MirrorUiState.Error,
-                    onStart = { viewModel.startTabletDisplay(placeholderDevice) },
+                    enabled = canStart,
+                    onStart = { connectedDevice?.let { viewModel.startTabletDisplay(it) } },
                 )
             }
 

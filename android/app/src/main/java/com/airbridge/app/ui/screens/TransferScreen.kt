@@ -1,5 +1,7 @@
 package com.airbridge.app.ui.screens
 
+import android.Manifest
+import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
@@ -66,6 +68,12 @@ fun TransferScreen(
         uri?.let { viewModel.sendFile(it) }
     }
 
+    // On API 26-28 we need WRITE_EXTERNAL_STORAGE to save received files to Downloads/AirBridge.
+    // API 29+ uses scoped storage and needs no explicit permission.
+    val writePermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission(),
+    ) { /* permission result — file picker opens regardless; receive will fail gracefully if denied */ }
+
     Scaffold(
         topBar = {
             TopAppBar(
@@ -91,7 +99,13 @@ fun TransferScreen(
             )
         },
         floatingActionButton = {
-            FloatingActionButton(onClick = { filePicker.launch("*/*") }) {
+            FloatingActionButton(onClick = {
+                // Request WRITE_EXTERNAL_STORAGE on API < 29 so received files can be saved.
+                if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
+                    writePermissionLauncher.launch(Manifest.permission.WRITE_EXTERNAL_STORAGE)
+                }
+                filePicker.launch("*/*")
+            }) {
                 Icon(Icons.Default.Add, contentDescription = "Send file")
             }
         },

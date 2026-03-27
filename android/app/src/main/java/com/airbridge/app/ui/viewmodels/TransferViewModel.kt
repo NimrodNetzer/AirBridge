@@ -8,7 +8,6 @@ import androidx.lifecycle.viewModelScope
 import com.airbridge.app.core.DeviceConnectionService
 import com.airbridge.app.core.interfaces.IDeviceRegistry
 import com.airbridge.app.core.interfaces.TransferState
-import com.airbridge.app.transfer.FileTransferService
 import com.airbridge.app.transfer.TransferNotificationManager
 import com.airbridge.app.transfer.interfaces.IFileTransferService
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -72,11 +71,9 @@ class TransferViewModel @Inject constructor(
                 _connectedDeviceId.value = ids.firstOrNull()
 
                 // Register receive handler for any newly connected device.
-                if (transferService is FileTransferService) {
-                    for (id in ids) {
-                        if (_handlerRegisteredFor.add(id)) {
-                            transferService.registerReceiveHandler(id)
-                        }
+                for (id in ids) {
+                    if (_handlerRegisteredFor.add(id)) {
+                        transferService.registerReceiveHandler(id)
                     }
                 }
             }
