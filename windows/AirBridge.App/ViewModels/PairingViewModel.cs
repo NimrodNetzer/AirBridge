@@ -43,6 +43,8 @@ public sealed partial class PairingViewModel : ObservableObject
 
     /// <summary>
     /// Opens a connection to <paramref name="device"/> and runs the pairing handshake.
+    /// On success the channel is kept alive and registered as the active session — callers
+    /// must NOT dispose it.
     /// </summary>
     public async Task StartPairingAsync(DeviceInfo device)
     {
@@ -52,10 +54,16 @@ public sealed partial class PairingViewModel : ObservableObject
         {
             _channel      = await _connection.ConnectToDeviceAsync(device, CancellationToken.None);
             StatusMessage = "Exchanging keys\u2026";
+            // PairAsync now calls RegisterSession internally on success,
+            // so the channel stays open as the active session.
             var success   = await _connection.PairAsync(device, _channel, CancellationToken.None);
             PairingSuccess = success;
             StatusMessage  = success ? "Paired successfully!" : "Pairing failed";
-            if (success) PairingComplete?.Invoke(this, EventArgs.Empty);
+            if (success)
+            {
+                _channel = null; // ownership transferred to DeviceConnectionService
+                PairingComplete?.Invoke(this, EventArgs.Empty);
+            }
         }
         catch (Exception ex)
         {
@@ -71,8 +79,10 @@ public sealed partial class PairingViewModel : ObservableObject
     [RelayCommand]
     private async Task CancelAsync()
     {
+        // Only dispose if ownership has not been transferred to DeviceConnectionService.
         if (_channel is not null)
             await _channel.DisposeAsync();
+        _channel = null;
         StatusMessage = "Pairing cancelled";
     }
 }

@@ -2,6 +2,7 @@ package com.airbridge.app.ui.viewmodels
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.airbridge.app.core.DeviceConnectionService
 import com.airbridge.app.core.interfaces.IDeviceRegistry
 import com.airbridge.app.core.interfaces.IPairingService
 import com.airbridge.app.core.interfaces.PairingResult
@@ -35,6 +36,7 @@ class PairingViewModel @Inject constructor(
     private val pairingService: IPairingService,
     private val connectionManager: IConnectionManager,
     private val deviceRegistry: IDeviceRegistry,
+    private val deviceConnectionService: DeviceConnectionService,
 ) : ViewModel() {
 
     private val _pairingState = MutableStateFlow<PairingState>(PairingState.Idle)
@@ -77,6 +79,11 @@ class PairingViewModel @Inject constructor(
 
                 val result = pairingService.requestPairingOnChannel(device, channel)
                 pinObserverJob.cancel()
+
+                // Keep the pairing channel alive as the active session on success.
+                if (result == PairingResult.SUCCESS || result == PairingResult.ALREADY_PAIRED) {
+                    deviceConnectionService.registerSession(device.deviceId, channel)
+                }
 
                 handleResult(result, device)
             } catch (e: Exception) {

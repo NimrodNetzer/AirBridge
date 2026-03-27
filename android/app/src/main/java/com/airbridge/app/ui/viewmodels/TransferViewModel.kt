@@ -5,6 +5,7 @@ import android.net.Uri
 import android.provider.OpenableColumns
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.airbridge.app.core.DeviceConnectionService
 import com.airbridge.app.core.interfaces.IDeviceRegistry
 import com.airbridge.app.core.interfaces.TransferState
 import com.airbridge.app.transfer.TransferNotificationManager
@@ -46,17 +47,41 @@ class TransferViewModel @Inject constructor(
     private val transferService: IFileTransferService,
     private val deviceRegistry: IDeviceRegistry,
     private val notificationManager: TransferNotificationManager,
+    private val deviceConnectionService: DeviceConnectionService,
 ) : ViewModel() {
 
     private val _activeSessions = MutableStateFlow<List<TransferSessionUiState>>(emptyList())
     val activeSessions: StateFlow<List<TransferSessionUiState>> = _activeSessions.asStateFlow()
 
     /**
-     * Sends the file identified by [uri] to the first paired device found in the registry.
-     * No-ops silently if no paired device is available (the UI should guard against this).
+     * The device ID of the currently connected device, or null when no session is open.
+     * Derived from [DeviceConnectionService.connectedDeviceIds] and updated reactively.
+     */
+    private val _connectedDeviceId = MutableStateFlow<String?>(null)
+    val connectedDeviceId: StateFlow<String?> = _connectedDeviceId.asStateFlow()
+
+    init {
+        // Observe connected device IDs from the session manager and surface the first one.
+        viewModelScope.launch {
+            deviceConnectionService.connectedDeviceIds.collect { ids ->
+                _connectedDeviceId.value = ids.firstOrNull()
+            }
+        }
+    }
+
+    /**
+     * Sends the file identified by [uri] to the first device with an active session.
+     * Falls back to the first paired device in the registry if no session is open.
+     * No-ops silently if neither is available (the UI should guard against this).
      */
     fun sendFile(uri: Uri) {
-        val device = deviceRegistry.getPairedDevices().firstOrNull() ?: return
+        val activeId = _connectedDeviceId.value
+        val device = if (activeId != null)
+            deviceRegistry.getAllDevices().find { it.deviceId == activeId }
+                ?: deviceRegistry.getPairedDevices().firstOrNull()
+        else
+            deviceRegistry.getPairedDevices().firstOrNull()
+        device ?: return
         val filePath = resolveFilePath(uri) ?: return
 
         viewModelScope.launch {
