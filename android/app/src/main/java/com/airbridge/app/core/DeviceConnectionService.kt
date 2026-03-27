@@ -19,6 +19,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.CopyOnWriteArrayList
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -110,9 +111,35 @@ class DeviceConnectionService @Inject constructor(
         _establishedChannels.emit(channel)
     }
 
+    // ── Message dispatcher ────────────────────────────────────────────────
+
+    private val _messageHandlers = ConcurrentHashMap<String, CopyOnWriteArrayList<suspend (com.airbridge.app.transport.protocol.ProtocolMessage) -> Unit>>()
+
     /**
-     * Registers [channel] as the active session for [deviceId] and starts monitoring
-     * it for disconnection. Replaces any previous session for the same device.
+     * Registers a handler that will be invoked for every incoming message on the session
+     * for [deviceId]. Multiple handlers may be registered for the same device; each message
+     * is delivered to all of them in registration order.
+     *
+     * The handler is removed automatically when the session for [deviceId] closes.
+     *
+     * @param deviceId The device whose incoming messages this handler should receive.
+     * @param handler  Suspend lambda invoked with each [ProtocolMessage].
+     */
+    fun addMessageHandler(deviceId: String, handler: suspend (com.airbridge.app.transport.protocol.ProtocolMessage) -> Unit) {
+        _messageHandlers.getOrPut(deviceId) { CopyOnWriteArrayList() }.add(handler)
+    }
+
+    /**
+     * Removes all message handlers for [deviceId].
+     */
+    fun removeMessageHandlers(deviceId: String) {
+        _messageHandlers.remove(deviceId)
+    }
+
+    /**
+     * Registers [channel] as the active session for [deviceId] and starts a dispatcher
+     * coroutine that fans out every incoming message to all registered handlers.
+     * Replaces any previous session for the same device.
      *
      * Call this after outbound pairing succeeds to keep the pairing channel alive.
      */
@@ -120,18 +147,24 @@ class DeviceConnectionService @Inject constructor(
         _sessions[deviceId] = channel
         _connectedDeviceIds.value = _connectedDeviceIds.value + deviceId
 
-        // Monitor the channel lifecycle in a background coroutine.
+        // Dispatch incoming messages to registered handlers; detect disconnect in finally.
         scope.launch {
             try {
-                // Collect until the flow completes (channel closed cleanly) or throws.
-                channel.incomingMessages.collect { /* keep-alive drain; feature services
-                                                      collect their own messages */ }
+                channel.incomingMessages.collect { message ->
+                    val handlers = _messageHandlers[deviceId] ?: return@collect
+                    for (handler in handlers) {
+                        try {
+                            handler(message)
+                        } catch (_: Exception) {
+                            // A misbehaving handler must not kill the dispatch loop.
+                        }
+                    }
+                }
             } catch (_: Exception) {
                 // Transport error — treat as disconnect.
             } finally {
-                // Only remove if this is still the registered session to avoid evicting a
-                // freshly-registered replacement session for the same device.
                 _sessions.remove(deviceId, channel)
+                _messageHandlers.remove(deviceId)
                 _connectedDeviceIds.value = _connectedDeviceIds.value - deviceId
             }
         }
