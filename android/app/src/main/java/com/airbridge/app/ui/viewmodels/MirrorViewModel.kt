@@ -5,6 +5,7 @@ import android.content.Intent
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.airbridge.app.core.DeviceConnectionService
+import com.airbridge.app.core.interfaces.IDeviceRegistry
 import com.airbridge.app.core.interfaces.MirrorMode
 import com.airbridge.app.core.models.DeviceInfo
 import com.airbridge.app.display.TabletDisplayActivity
@@ -37,12 +38,29 @@ class MirrorViewModel @Inject constructor(
     @ApplicationContext private val context: Context,
     private val mirrorService: IMirrorService,
     private val deviceConnectionService: DeviceConnectionService,
+    private val deviceRegistry: IDeviceRegistry,
 ) : ViewModel() {
 
     private val _mirrorState = MutableStateFlow<MirrorUiState>(MirrorUiState.Idle)
     val mirrorState: StateFlow<MirrorUiState> = _mirrorState.asStateFlow()
 
+    /** The first currently-connected device, or null when no session is open. */
+    private val _connectedDevice = MutableStateFlow<DeviceInfo?>(null)
+    val connectedDevice: StateFlow<DeviceInfo?> = _connectedDevice.asStateFlow()
+
     private var mirrorJob: Job? = null
+
+    init {
+        viewModelScope.launch {
+            deviceConnectionService.connectedDeviceIds.collect { ids ->
+                val id = ids.firstOrNull()
+                _connectedDevice.value = if (id != null)
+                    deviceRegistry.getAllDevices().find { it.deviceId == id }
+                        ?: deviceRegistry.getPairedDevices().firstOrNull()
+                else null
+            }
+        }
+    }
 
     /**
      * Starts a Phone-Window mirror session to the given [device].
