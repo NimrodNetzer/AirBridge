@@ -1,5 +1,7 @@
 package com.airbridge.app.ui.screens
 
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
@@ -34,6 +36,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -47,6 +50,7 @@ import com.airbridge.app.core.models.DeviceInfo
 import com.airbridge.app.core.models.DeviceType
 import com.airbridge.app.ui.viewmodels.MirrorUiState
 import com.airbridge.app.ui.viewmodels.MirrorViewModel
+import kotlinx.coroutines.flow.filterNotNull
 
 /**
  * Mirror screen — lets the user start a phone-window mirror or a tablet second-monitor session.
@@ -59,7 +63,19 @@ fun MirrorScreen(
     navController: NavController,
     viewModel: MirrorViewModel = hiltViewModel(),
 ) {
-    val mirrorState by viewModel.mirrorState.collectAsStateWithLifecycle()
+    val mirrorState           by viewModel.mirrorState.collectAsStateWithLifecycle()
+    val pendingProjectionReq  by viewModel.pendingProjectionRequest.collectAsStateWithLifecycle()
+
+    // Launcher for the MediaProjection permission dialog.
+    val projectionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.StartActivityForResult(),
+        onResult = { viewModel.onMediaProjectionResult(it) },
+    )
+
+    // Fire the system dialog whenever the ViewModel signals a pending permission request.
+    LaunchedEffect(pendingProjectionReq) {
+        pendingProjectionReq?.let { projectionLauncher.launch(it) }
+    }
 
     // Placeholder device for demonstration — in production this comes from DeviceRegistry.
     val placeholderDevice = DeviceInfo(

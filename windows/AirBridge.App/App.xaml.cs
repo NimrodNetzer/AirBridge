@@ -63,7 +63,17 @@ public partial class App : Application
         services.AddSingleton<IFileTransferService, FileTransferServiceImpl>();
 
         // ── Mirror ────────────────────────────────────────────────────────────
-        services.AddSingleton<IMirrorService, MirrorServiceImpl>();
+        // Wire decoder and floating-window factories so MirrorSession can render frames.
+        // Both factories are compiled only when WINUI3 is defined (AirBridge.App project).
+        services.AddSingleton<IMirrorService>(_ =>
+            new MirrorServiceImpl(
+                decoderFactory: () => new MirrorDecoder(),
+#if WINUI3
+                windowFactory:  decoder => new MirrorWindow(decoder)
+#else
+                windowFactory:  null
+#endif
+            ));
 
         // ── App-level orchestration ───────────────────────────────────────────
         services.AddSingleton<DeviceConnectionService>();

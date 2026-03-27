@@ -71,6 +71,17 @@
             android:configChanges="orientation|screenSize|keyboardHidden"
             android:launchMode="singleTask" />
 
+        <!--
+          Phone as Floating Window: foreground service that holds the MediaProjection token,
+          drives ScreenCaptureSession (MediaProjection → MediaCodec H.264), and streams
+          encoded frames to the Windows PC over the active TLS channel.
+          foregroundServiceType="mediaProjection" is required on API 29+ for screen capture.
+        -->
+        <service
+            android:name=".mirror.PhoneCaptureService"
+            android:exported="false"
+            android:foregroundServiceType="mediaProjection" />
+
     </application>
 
 </manifest>
