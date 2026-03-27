@@ -177,12 +177,13 @@ class TlsMessageChannel(
                 if (!_connected.get()) break
 
                 val pingTime = System.currentTimeMillis()
-                runCatching {
+                val sendOk = try {
                     send(ProtocolMessage(MessageType.PING, ByteArray(0)))
-                }.onFailure {
-                    // Send failure already marks the channel disconnected; stop the loop
-                     break
+                    true
+                } catch (e: Exception) {
+                    false
                 }
+                if (!sendOk) break
 
                 // Wait for PONG (poll at 250ms intervals up to PONG_TIMEOUT_MS)
                 val deadline = pingTime + PONG_TIMEOUT_MS
