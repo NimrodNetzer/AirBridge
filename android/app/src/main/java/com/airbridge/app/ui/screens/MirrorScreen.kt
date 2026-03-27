@@ -46,10 +46,8 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavController
-import com.airbridge.app.core.models.DeviceInfo
 import com.airbridge.app.ui.viewmodels.MirrorUiState
 import com.airbridge.app.ui.viewmodels.MirrorViewModel
-import kotlinx.coroutines.flow.filterNotNull
 
 /**
  * Mirror screen — lets the user start a phone-window mirror or a tablet second-monitor session.
@@ -64,6 +62,7 @@ fun MirrorScreen(
 ) {
     val mirrorState          by viewModel.mirrorState.collectAsStateWithLifecycle()
     val pendingProjectionReq by viewModel.pendingProjectionRequest.collectAsStateWithLifecycle()
+    val connectedDevice      by viewModel.connectedDevice.collectAsStateWithLifecycle()
 
     // Launcher for the MediaProjection permission dialog.
     val projectionLauncher = rememberLauncherForActivityResult(
@@ -75,16 +74,6 @@ fun MirrorScreen(
     LaunchedEffect(pendingProjectionReq) {
         pendingProjectionReq?.let { projectionLauncher.launch(it) }
     }
-
-    // Placeholder device for demonstration — in production this comes from DeviceRegistry.
-    val placeholderDevice = DeviceInfo(
-        deviceId = "placeholder",
-        deviceName = "Windows PC",
-        deviceType = DeviceType.WINDOWS_PC,
-        ipAddress = "192.168.1.1",
-        port = 5500,
-        isPaired = true,
-    )
 
     Scaffold(
         topBar = {
@@ -160,13 +149,23 @@ fun MirrorScreen(
 
             Spacer(Modifier.height(8.dp))
 
-            Text(
-                text = "Both devices must be on the same Wi-Fi network.",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                textAlign = TextAlign.Center,
-                modifier = Modifier.fillMaxWidth(),
-            )
+            if (connectedDevice == null) {
+                Text(
+                    text = "No device connected. Go to Devices and connect to a Windows PC first.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            } else {
+                Text(
+                    text = "Connected to ${connectedDevice!!.deviceName}. Both devices must be on the same Wi-Fi network.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
         }
     }
 }

@@ -17,10 +17,12 @@ public sealed partial class MirrorViewModel : ObservableObject, IDisposable
 {
     private readonly MirrorServiceImpl _mirrorService;
     private readonly DeviceConnectionService _connection;
+    private readonly IDeviceRegistry _registry;
     private readonly DispatcherQueue _dispatcher;
 
     private IMirrorSession? _activeSession;
     private IMessageChannel? _channel;
+    private DeviceInfo? _connectedDevice;
 
     [ObservableProperty]
     private bool _isMirroring;
@@ -29,28 +31,56 @@ public sealed partial class MirrorViewModel : ObservableObject, IDisposable
     private MirrorMode _mirrorMode = MirrorMode.PhoneWindow;
 
     [ObservableProperty]
-    private string _statusMessage = "No active session";
+    private string _statusMessage = "No device connected";
 
     [ObservableProperty]
     private bool _isConnected;
 
     /// <summary>
-    /// Initialises the ViewModel.
+    /// Initialises the ViewModel and subscribes to connection lifecycle events so
+    /// <see cref="IsConnected"/> tracks the active session automatically.
     /// </summary>
-    public MirrorViewModel(IMirrorService mirrorService, DeviceConnectionService connection)
+    public MirrorViewModel(IMirrorService mirrorService, DeviceConnectionService connection, IDeviceRegistry registry)
     {
         // MirrorServiceImpl exposes StartMirrorWithChannelAsync which we need.
         _mirrorService = (MirrorServiceImpl)mirrorService;
         _connection    = connection;
+        _registry      = registry;
         _dispatcher    = DispatcherQueue.GetForCurrentThread();
+
+        _connection.DeviceConnected    += OnDeviceConnected;
+        _connection.DeviceDisconnected += OnDeviceDisconnected;
+
+        // Reflect any session that was already active before this ViewModel was created.
+        var existingId = _connection.ConnectedDeviceIds.FirstOrDefault();
+        if (existingId is not null) ActivateDevice(existingId);
     }
 
-    /// <summary>Binds this ViewModel to an active connection.</summary>
-    public void SetChannel(DeviceInfo device, IMessageChannel channel)
+    private void OnDeviceConnected(object? sender, string deviceId)
+        => _dispatcher.TryEnqueue(() => ActivateDevice(deviceId));
+
+    private void OnDeviceDisconnected(object? sender, string deviceId)
     {
-        _channel     = channel;
-        IsConnected  = true;
-        StatusMessage = $"Connected to {device.DeviceName}";
+        _dispatcher.TryEnqueue(() =>
+        {
+            if (_connectedDevice?.DeviceId != deviceId) return;
+            _channel         = null;
+            _connectedDevice = null;
+            IsConnected      = false;
+            StatusMessage    = "Device disconnected";
+        });
+    }
+
+    private void ActivateDevice(string deviceId)
+    {
+        var channel = _connection.GetActiveSession(deviceId);
+        if (channel is null) return;
+        var device = _registry.GetAllDevices().FirstOrDefault(d => d.DeviceId == deviceId)
+                     ?? new DeviceInfo(deviceId, deviceId, DeviceType.AndroidPhone, string.Empty, 0, false);
+        _channel         = channel;
+        _connectedDevice = device;
+        IsConnected      = true;
+        StatusMessage    = $"Connected to {device.DeviceName}";
     }
 
     /// <summary>Starts a phone-window mirror session.</summary>
@@ -134,6 +164,8 @@ public sealed partial class MirrorViewModel : ObservableObject, IDisposable
     /// <inheritdoc/>
     public void Dispose()
     {
+        _connection.DeviceConnected    -= OnDeviceConnected;
+        _connection.DeviceDisconnected -= OnDeviceDisconnected;
         _activeSession?.Dispose();
     }
 }

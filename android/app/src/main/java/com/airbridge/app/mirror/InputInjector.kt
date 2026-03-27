@@ -55,8 +55,12 @@ class InputInjector @Inject constructor() {
     // ── Touch / Mouse ────────────────────────────────────────────────────────
 
     private fun injectTouch(service: AirBridgeAccessibilityService, event: InputEventArgs) {
-        val px = (event.normalizedX * screenWidth).toFloat()
-        val py = (event.normalizedY * screenHeight).toFloat()
+        // Clamp normalised coordinates to [0, 1] to guard against out-of-range values
+        // from a malformed or malicious remote peer.
+        val nx = event.normalizedX.coerceIn(0.0f, 1.0f)
+        val ny = event.normalizedY.coerceIn(0.0f, 1.0f)
+        val px = (nx * screenWidth).toFloat()
+        val py = (ny * screenHeight).toFloat()
 
         val path = Path().apply { moveTo(px, py) }
 

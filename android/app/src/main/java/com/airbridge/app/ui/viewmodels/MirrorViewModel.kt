@@ -8,6 +8,7 @@ import androidx.activity.result.ActivityResult
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.airbridge.app.core.DeviceConnectionService
+import com.airbridge.app.core.interfaces.IDeviceRegistry
 import com.airbridge.app.core.interfaces.MirrorMode
 import com.airbridge.app.core.models.DeviceInfo
 import com.airbridge.app.display.TabletDisplayActivity
@@ -17,8 +18,11 @@ import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
@@ -50,10 +54,22 @@ class MirrorViewModel @Inject constructor(
     @ApplicationContext private val context: Context,
     private val mirrorService: IMirrorService,
     private val deviceConnectionService: DeviceConnectionService,
+    private val deviceRegistry: IDeviceRegistry,
 ) : ViewModel() {
 
     private val _mirrorState = MutableStateFlow<MirrorUiState>(MirrorUiState.Idle)
     val mirrorState: StateFlow<MirrorUiState> = _mirrorState.asStateFlow()
+
+    /**
+     * The first device in the registry that currently has an active session.
+     * Null when no device is connected.
+     */
+    val connectedDevice: StateFlow<DeviceInfo?> = combine(
+        deviceConnectionService.connectedDeviceIds,
+        deviceRegistry.devicesFlow,
+    ) { ids, devices ->
+        devices.firstOrNull { it.deviceId in ids }
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, null)
 
     /**
      * Emits the [Intent] the screen should launch via `rememberLauncherForActivityResult`
