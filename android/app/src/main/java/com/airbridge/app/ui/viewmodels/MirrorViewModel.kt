@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.Intent
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.airbridge.app.core.DeviceConnectionService
 import com.airbridge.app.core.interfaces.MirrorMode
 import com.airbridge.app.core.models.DeviceInfo
 import com.airbridge.app.display.TabletDisplayActivity
@@ -35,6 +36,7 @@ sealed class MirrorUiState {
 class MirrorViewModel @Inject constructor(
     @ApplicationContext private val context: Context,
     private val mirrorService: IMirrorService,
+    private val deviceConnectionService: DeviceConnectionService,
 ) : ViewModel() {
 
     private val _mirrorState = MutableStateFlow<MirrorUiState>(MirrorUiState.Idle)
@@ -76,10 +78,18 @@ class MirrorViewModel @Inject constructor(
      * then starts a [MirrorMode.TABLET_DISPLAY] session to [device].
      */
     fun startTabletDisplay(device: DeviceInfo) {
-        // Launch the full-screen renderer activity first; it subscribes to the session.
+        // Retrieve the active channel before launching the activity.
+        // TabletDisplayActivity reads pendingChannel in onCreate() and finishes if null.
+        val channel = deviceConnectionService.getActiveSession(device.deviceId)
+        if (channel == null) {
+            _mirrorState.value = MirrorUiState.Error("No active connection to ${device.deviceId}")
+            return
+        }
+        TabletDisplayActivity.pendingChannel = channel
+
         val intent = Intent(context, TabletDisplayActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_NEW_TASK
-            putExtra("deviceId", device.deviceId)
+            putExtra(TabletDisplayActivity.EXTRA_SESSION_ID, "tablet-${device.deviceId}")
         }
         context.startActivity(intent)
 
