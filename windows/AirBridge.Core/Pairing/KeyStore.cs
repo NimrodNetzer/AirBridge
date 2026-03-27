@@ -141,9 +141,36 @@ public sealed class KeyStore : IDisposable
 
     // ── Internal data model ────────────────────────────────────────────────
 
+    // ── TLS certificate ────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Returns the stored TLS certificate PFX bytes, or null if none persisted yet.
+    /// </summary>
+    public byte[]? GetTlsCertificatePfx()
+    {
+        if (_data.TlsCertificatePfx is null) return null;
+        return Convert.FromBase64String(_data.TlsCertificatePfx);
+    }
+
+    /// <summary>
+    /// Persists the TLS certificate as PFX/PKCS12 bytes so the same cert survives
+    /// across restarts (required for TOFU fingerprint pinning).
+    /// </summary>
+    public async Task StoreTlsCertificatePfxAsync(byte[] pfxBytes)
+    {
+        await _lock.WaitAsync().ConfigureAwait(false);
+        try
+        {
+            _data.TlsCertificatePfx = Convert.ToBase64String(pfxBytes);
+            await SaveAsync().ConfigureAwait(false);
+        }
+        finally { _lock.Release(); }
+    }
+
     private sealed class KeyStoreData
     {
         public string? LocalPrivateKeyPkcs8 { get; set; }
+        public string? TlsCertificatePfx { get; set; }
         public Dictionary<string, string> RemoteKeys { get; set; } = new();
     }
 }

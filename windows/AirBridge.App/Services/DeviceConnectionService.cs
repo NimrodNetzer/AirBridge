@@ -107,14 +107,40 @@ public sealed class DeviceConnectionService : IDisposable
     {
         try
         {
-            // Read the first message to see what the remote side wants
-            var msg = await channel.ReceiveAsync().ConfigureAwait(false);
-            if (msg is null || msg.Type != MessageType.PairingRequest)
+            // Give the remote side up to 30 s to send the opening PAIRING_REQUEST.
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+            ProtocolMessage? msg;
+            try
+            {
+                msg = await channel.ReceiveAsync(cts.Token).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+            {
+                // Remote side did not send a request in time — drop the connection.
+                await channel.DisposeAsync().ConfigureAwait(false);
                 return;
+            }
 
-            var (remoteKey, pin) = AirBridge.Transport.Pairing.PairingCoordinator.ParseRequestPayload(msg.Payload);
+            if (msg is null || msg.Type != MessageType.PairingRequest)
+            {
+                await channel.DisposeAsync().ConfigureAwait(false);
+                return;
+            }
 
-            // Use remote endpoint as temporary device ID until handshake completes
+            byte[] remoteKey;
+            string pin;
+            try
+            {
+                (remoteKey, pin) = AirBridge.Transport.Pairing.PairingCoordinator.ParseRequestPayload(msg.Payload);
+            }
+            catch
+            {
+                // Malformed payload — drop silently.
+                await channel.DisposeAsync().ConfigureAwait(false);
+                return;
+            }
+
+            // Use remote endpoint as temporary device ID until handshake completes.
             var remoteId = channel.RemoteDeviceId;
 
             _pendingPairingChannel   = channel;
@@ -127,34 +153,52 @@ public sealed class DeviceConnectionService : IDisposable
         }
         catch
         {
-            // ignore — bad connection attempt
+            // ignore — bad connection attempt; dispose channel best-effort
+            try { await channel.DisposeAsync().ConfigureAwait(false); } catch { }
         }
     }
 
     /// <summary>
-    /// Sends a PAIRING_RESPONSE on the pending inbound channel to accept the request from Android.
+    /// Sends a PAIRING_RESPONSE on the pending inbound channel.
     /// </summary>
-    public async Task<bool> AcceptIncomingPairingAsync()
+    /// <param name="accepted">
+    /// <see langword="true"/> to accept the pairing request and persist the remote key;
+    /// <see langword="false"/> to reject it.  In both cases the pending state is cleared.
+    /// </param>
+    /// <returns><see langword="true"/> when the response was sent successfully and (if
+    /// accepting) the key was stored; <see langword="false"/> on any error or if there is
+    /// no pending request.</returns>
+    public async Task<bool> AcceptIncomingPairingAsync(bool accepted = true)
     {
         if (_pendingPairingChannel is null || _pendingRemoteKey is null || _pendingRemoteDeviceId is null)
             return false;
 
+        // Capture pending state before clearing it so the finally block is safe.
+        var channel  = _pendingPairingChannel;
+        var remoteKey = _pendingRemoteKey;
+        var remoteId  = _pendingRemoteDeviceId;
+
         try
         {
+            // Wire format: [1 byte accepted][ushort key length][key bytes]
+            // Matches Android PairingService.parseResponsePayload():
+            //   dis.readBoolean() → dis.readUnsignedShort() → dis.readFully(key)
             var responsePayload = AirBridge.Transport.Pairing.PairingCoordinator.BuildResponsePayload(
-                accepted: true,
+                accepted:       accepted,
                 localPublicKey: _pairing.GetLocalPublicKey());
 
-            await _pendingPairingChannel.SendAsync(
+            await channel.SendAsync(
                 new ProtocolMessage(MessageType.PairingResponse, responsePayload))
                 .ConfigureAwait(false);
 
-            await _pairing.StorePeerKeyAsync(_pendingRemoteDeviceId, _pendingRemoteKey)
-                          .ConfigureAwait(false);
+            if (!accepted)
+                return true; // rejection sent successfully
+
+            await _pairing.StorePeerKeyAsync(remoteId, remoteKey).ConfigureAwait(false);
 
             var device = new AirBridge.Core.Models.DeviceInfo(
-                DeviceId:   _pendingRemoteDeviceId,
-                DeviceName: _pendingRemoteDeviceId,
+                DeviceId:   remoteId,
+                DeviceName: remoteId,
                 DeviceType: AirBridge.Core.Models.DeviceType.AndroidPhone,
                 IpAddress:  string.Empty,
                 Port:       0,
