@@ -115,23 +115,18 @@ class TlsMessageChannel(
                 }
 
                 // ── Keepalive intercept ───────────────────────────────────────
+                // PING/PONG handled internally; never emitted to collectors.
                 when (messageType) {
                     MessageType.PING -> {
-                        // Reply with PONG; do not surface PING to collectors
-                        runCatching {
-                            send(ProtocolMessage(MessageType.PONG, ByteArray(0)))
-                        }
-                        continue
+                        try { send(ProtocolMessage(MessageType.PONG, ByteArray(0))) } catch (_: Exception) {}
                     }
                     MessageType.PONG -> {
-                        // Record pong receipt; do not surface to collectors
                         lastPongMs.set(System.currentTimeMillis())
-                        continue
                     }
-                    else -> { /* fall through and emit */ }
+                    else -> {
+                        emit(ProtocolMessage(type = messageType, payload = payload))
+                    }
                 }
-
-                emit(ProtocolMessage(type = messageType, payload = payload))
             }
         } finally {
             _connected.set(false)
@@ -186,7 +181,7 @@ class TlsMessageChannel(
                     send(ProtocolMessage(MessageType.PING, ByteArray(0)))
                 }.onFailure {
                     // Send failure already marks the channel disconnected; stop the loop
-                    break
+                     break
                 }
 
                 // Wait for PONG (poll at 250ms intervals up to PONG_TIMEOUT_MS)
