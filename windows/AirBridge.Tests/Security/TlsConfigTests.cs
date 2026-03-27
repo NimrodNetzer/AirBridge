@@ -184,9 +184,9 @@ public class TlsConfigTests
     [Fact]
     public void TlsConnectionManager_InvalidPort_ThrowsArgumentOutOfRange()
     {
-        Assert.Throws<ArgumentOutOfRangeException>(() => new TlsConnectionManager(port: 0));
-        Assert.Throws<ArgumentOutOfRangeException>(() => new TlsConnectionManager(port: -1));
-        Assert.Throws<ArgumentOutOfRangeException>(() => new TlsConnectionManager(port: 65536));
+        Assert.Throws<ArgumentOutOfRangeException>(() => new TlsConnectionManager("test-id", "TestDevice", port: 0));
+        Assert.Throws<ArgumentOutOfRangeException>(() => new TlsConnectionManager("test-id", "TestDevice", port: -1));
+        Assert.Throws<ArgumentOutOfRangeException>(() => new TlsConnectionManager("test-id", "TestDevice", port: 65536));
     }
 
     [Theory]
@@ -196,7 +196,7 @@ public class TlsConfigTests
     [InlineData(65535)]
     public void TlsConnectionManager_ValidPorts_DoNotThrow(int port)
     {
-        using var mgr = new TlsConnectionManager(port);
+        using var mgr = new TlsConnectionManager("test-id", "TestDevice", port: port);
         Assert.NotNull(mgr);
     }
 
@@ -205,7 +205,7 @@ public class TlsConfigTests
     [Fact]
     public async Task TlsConnectionManager_DisposedInstance_ThrowsObjectDisposedException()
     {
-        var mgr = new TlsConnectionManager();
+        var mgr = new TlsConnectionManager("test-id", "TestDevice");
         mgr.Dispose();
 
         var device = new AirBridge.Core.Models.DeviceInfo(
@@ -223,7 +223,7 @@ public class TlsConfigTests
     [Fact]
     public async Task TlsConnectionManager_DisposedInstance_StartListeningThrows()
     {
-        var mgr = new TlsConnectionManager();
+        var mgr = new TlsConnectionManager("test-id", "TestDevice");
         mgr.Dispose();
 
         await Assert.ThrowsAsync<ObjectDisposedException>(
