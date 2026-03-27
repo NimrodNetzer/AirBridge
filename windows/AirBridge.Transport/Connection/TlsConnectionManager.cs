@@ -3,6 +3,8 @@ using System.Net.Security;
 using System.Net.Sockets;
 using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
+using System.Text;
+using System.Text.Json;
 using AirBridge.Core.Models;
 using AirBridge.Core.Pairing;
 using AirBridge.Transport.Interfaces;
@@ -23,17 +25,22 @@ namespace AirBridge.Transport.Connection;
 /// pinning (Ed25519 keys, mutual TLS with stored peer certificates).
 /// </para>
 /// <para>
-/// All accepted connections are wrapped in a <see cref="TlsMessageChannel"/> and exposed
-/// via the <see cref="ConnectionReceived"/> event.  The initial
-/// <see cref="RemoteDeviceId"/> on the channel is a placeholder; higher layers should
-/// update it after the handshake message exchange.
+/// Immediately after every TLS handshake (both inbound and outbound), a HANDSHAKE
+/// message (type 0x01) is exchanged.  Each side sends its own device identity as
+/// UTF-8 JSON and reads the peer's identity to populate
+/// <see cref="TlsMessageChannel.RemoteDeviceId"/>.
+/// </para>
+/// <para>
+/// A PING/PONG keepalive loop is started on each channel after the HANDSHAKE exchange.
 /// </para>
 /// </remarks>
 public sealed class TlsConnectionManager : IConnectionManager
 {
     // ── Configuration ──────────────────────────────────────────────────────
-    private readonly int _port;
+    private readonly int     _port;
     private readonly KeyStore? _keyStore;
+    private readonly string  _localDeviceId;
+    private readonly string  _localDeviceName;
 
     // ── Runtime state ──────────────────────────────────────────────────────
     private TcpListener?         _listener;
@@ -55,6 +62,12 @@ public sealed class TlsConnectionManager : IConnectionManager
     /// <summary>
     /// Initialises the connection manager.
     /// </summary>
+    /// <param name="localDeviceId">
+    /// Stable UUID that identifies this Windows device across connections.
+    /// </param>
+    /// <param name="localDeviceName">
+    /// Human-readable name of this device (e.g. <see cref="Environment.MachineName"/>).
+    /// </param>
     /// <param name="keyStore">
     /// Optional <see cref="KeyStore"/> used to persist the TLS certificate across restarts.
     /// When provided, the same certificate is reused on every start so peers can pin its
@@ -63,12 +76,21 @@ public sealed class TlsConnectionManager : IConnectionManager
     /// <param name="port">
     /// TCP port to listen on.  Defaults to <see cref="ProtocolMessage.DefaultPort"/> (47821).
     /// </param>
-    public TlsConnectionManager(KeyStore? keyStore = null, int port = ProtocolMessage.DefaultPort)
+    public TlsConnectionManager(
+        string    localDeviceId,
+        string    localDeviceName,
+        KeyStore? keyStore = null,
+        int       port     = ProtocolMessage.DefaultPort)
     {
+        if (string.IsNullOrWhiteSpace(localDeviceId))
+            throw new ArgumentException("Device ID must not be empty.", nameof(localDeviceId));
         if (port is < 1 or > 65535)
             throw new ArgumentOutOfRangeException(nameof(port));
-        _port     = port;
-        _keyStore = keyStore;
+
+        _localDeviceId   = localDeviceId;
+        _localDeviceName = localDeviceName ?? Environment.MachineName;
+        _port            = port;
+        _keyStore        = keyStore;
     }
 
     // ── IConnectionManager ─────────────────────────────────────────────────
@@ -123,6 +145,8 @@ public sealed class TlsConnectionManager : IConnectionManager
     /// Opens an outbound TLS 1.3 connection to <paramref name="remoteDevice"/>.
     /// The remote certificate is accepted without validation in this iteration;
     /// Iteration 3 replaces this with TOFU key pinning.
+    /// After TLS authentication, a HANDSHAKE message is exchanged with the peer
+    /// and the channel's <see cref="TlsMessageChannel.RemoteDeviceId"/> is updated.
     /// </remarks>
     public async Task<IMessageChannel> ConnectAsync(
         DeviceInfo remoteDevice,
@@ -156,7 +180,9 @@ public sealed class TlsConnectionManager : IConnectionManager
                            .ConfigureAwait(false);
 
             var channel = new TlsMessageChannel(sslStream, remoteDevice.DeviceId);
+            await PerformHandshakeAsync(channel, cancellationToken).ConfigureAwait(false);
             TrackChannel(channel);
+            channel.StartKeepaliveAsync(cancellationToken);
             return channel;
         }
         catch
@@ -218,15 +244,64 @@ public sealed class TlsConnectionManager : IConnectionManager
             await sslStream.AuthenticateAsServerAsync(serverOptions, cancellationToken)
                            .ConfigureAwait(false);
 
-            // Remote device ID is unknown until Handshake — use a placeholder
+            // Use IP as placeholder until HANDSHAKE reveals the stable device ID
             var remoteEndpoint = tcpClient.Client.RemoteEndPoint?.ToString() ?? "unknown";
             var channel = new TlsMessageChannel(sslStream, remoteEndpoint);
+            await PerformHandshakeAsync(channel, cancellationToken).ConfigureAwait(false);
             TrackChannel(channel);
+            channel.StartKeepaliveAsync(cancellationToken);
             ConnectionReceived?.Invoke(this, channel);
         }
         catch
         {
             tcpClient.Dispose();
+        }
+    }
+
+    /// <summary>
+    /// Exchanges HANDSHAKE messages with the peer.  Each side sends its own identity
+    /// and receives the peer's identity.  Updates <paramref name="channel"/>'s
+    /// <see cref="TlsMessageChannel.RemoteDeviceId"/> with the received device ID.
+    /// </summary>
+    private async Task PerformHandshakeAsync(TlsMessageChannel channel, CancellationToken cancellationToken)
+    {
+        // Build local identity payload
+        var identityJson = JsonSerializer.Serialize(new
+        {
+            deviceId   = _localDeviceId,
+            deviceName = _localDeviceName,
+            deviceType = "windows_pc"
+        });
+        var payload = Encoding.UTF8.GetBytes(identityJson);
+        var handshakeMsg = new ProtocolMessage(MessageType.Handshake, payload);
+
+        // Send our identity and receive the peer's identity concurrently to avoid deadlock
+        // when both sides send before reading.
+        var sendTask    = channel.SendAsync(handshakeMsg, cancellationToken);
+        var receiveTask = channel.ReceiveAsync(cancellationToken);
+
+        await Task.WhenAll(sendTask, receiveTask).ConfigureAwait(false);
+
+        var received = receiveTask.Result;
+        if (received is null) return; // peer closed before handshake
+
+        if (received.Type == MessageType.Handshake && received.Payload.Length > 0)
+        {
+            try
+            {
+                var json = Encoding.UTF8.GetString(received.Payload);
+                using var doc = JsonDocument.Parse(json);
+                if (doc.RootElement.TryGetProperty("deviceId", out var idProp))
+                {
+                    var peerId = idProp.GetString();
+                    if (!string.IsNullOrEmpty(peerId))
+                        channel.RemoteDeviceId = peerId;
+                }
+            }
+            catch (JsonException)
+            {
+                // Malformed JSON — keep the IP-address placeholder; do not abort connection
+            }
         }
     }
 

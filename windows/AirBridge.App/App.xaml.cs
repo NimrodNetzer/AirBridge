@@ -53,7 +53,11 @@ public partial class App : Application
             return new MdnsDiscoveryService(deviceId, deviceName, DeviceType.WindowsPc);
         });
         services.AddSingleton<IConnectionManager>(sp =>
-            new TlsConnectionManager(sp.GetRequiredService<KeyStore>()));
+        {
+            var deviceId   = GetOrCreateDeviceId();
+            var deviceName = Environment.MachineName;
+            return new TlsConnectionManager(deviceId, deviceName, sp.GetRequiredService<KeyStore>());
+        });
 
         // ── Transfer ──────────────────────────────────────────────────────────
         services.AddSingleton<IFileTransferService, FileTransferServiceImpl>();
