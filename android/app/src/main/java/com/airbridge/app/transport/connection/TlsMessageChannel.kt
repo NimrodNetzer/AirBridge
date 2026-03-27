@@ -3,10 +3,14 @@ package com.airbridge.app.transport.connection
 import com.airbridge.app.transport.interfaces.IMessageChannel
 import com.airbridge.app.transport.protocol.MessageType
 import com.airbridge.app.transport.protocol.ProtocolMessage
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOn
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -17,6 +21,7 @@ import java.io.DataOutputStream
 import java.io.EOFException
 import java.net.Socket
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicLong
 import javax.net.ssl.SSLSocket
 
 /**
@@ -26,18 +31,25 @@ import javax.net.ssl.SSLSocket
  * Each frame on the wire is:
  * ```
  * ┌───────────────────────┬────────────┬───────────────────────┐
- * │  length  (4 bytes BE) │ type byte  │  payload (length - 1) │
+ * │  length  (4 bytes BE) │ type byte  │  payload (length)     │
  * └───────────────────────┴────────────┴───────────────────────┘
  * ```
- * `length` = 1 (type byte) + payload size.
+ * `length` = payload size only (type byte is NOT included).
  *
  * The maximum payload is [ProtocolMessage.MAX_PAYLOAD_BYTES].
  *
  * ## Thread safety
  * [send] is protected by a [Mutex]; multiple coroutines may call it concurrently.
  *
- * @param socket       The established TLS socket.
- * @param remoteDeviceId Stable identifier of the remote peer.
+ * ## Keepalive
+ * PING (0xF0) and PONG (0xF1) frames are handled internally and never emitted on
+ * [incomingMessages].  Call [startKeepalive] after the HANDSHAKE exchange to enable
+ * the 30-second keepalive loop.  If no PONG is received within 10 seconds of a PING,
+ * the channel is closed automatically.
+ *
+ * @param socket         The established TLS socket.
+ * @param remoteDeviceId Stable device ID of the remote peer, resolved from the HANDSHAKE exchange
+ *                       by [TlsConnectionManager] before the channel is constructed.
  */
 class TlsMessageChannel(
     private val socket: Socket,
@@ -52,6 +64,15 @@ class TlsMessageChannel(
 
     private val sendMutex = Mutex()
 
+    // Epoch-millisecond timestamp of the last PONG received from the peer.
+    // Initialised to "now" so a freshly-created channel is not immediately considered dead.
+    private val lastPongMs = AtomicLong(System.currentTimeMillis())
+
+    companion object {
+        private const val KEEPALIVE_INTERVAL_MS = 30_000L
+        private const val PONG_TIMEOUT_MS       = 10_000L
+    }
+
     // -------------------------------------------------------------------------
     // Incoming message stream
     // -------------------------------------------------------------------------
@@ -60,22 +81,22 @@ class TlsMessageChannel(
      * Cold [Flow] that reads framed messages until the connection closes cleanly.
      * Each subscription starts a new read loop — intended to be collected by a single consumer.
      * Completes normally on EOF; throws on protocol violations.
+     *
+     * PING and PONG messages are handled internally and never emitted to collectors.
      */
     override val incomingMessages: Flow<ProtocolMessage> = flow {
         try {
             while (_connected.get()) {
-                // Read 4-byte length prefix (big-endian)
-                val frameLength = try {
+                // Read 4-byte payload-size prefix (big-endian, does NOT include type byte)
+                val payloadSize = try {
                     input.readInt()
                 } catch (e: EOFException) {
                     break  // clean close
                 }
 
-                if (frameLength < 1) {
-                    throw IllegalStateException("Invalid frame length: $frameLength")
+                if (payloadSize < 0) {
+                    throw IllegalStateException("Invalid payload size: $payloadSize")
                 }
-
-                val payloadSize = frameLength - 1  // subtract the type byte
                 if (payloadSize > ProtocolMessage.MAX_PAYLOAD_BYTES) {
                     throw IllegalStateException(
                         "Payload too large: $payloadSize > ${ProtocolMessage.MAX_PAYLOAD_BYTES}"
@@ -93,7 +114,19 @@ class TlsMessageChannel(
                     ByteArray(0)
                 }
 
-                emit(ProtocolMessage(type = messageType, payload = payload))
+                // ── Keepalive intercept ───────────────────────────────────────
+                // PING/PONG handled internally; never emitted to collectors.
+                when (messageType) {
+                    MessageType.PING -> {
+                        try { send(ProtocolMessage(MessageType.PONG, ByteArray(0))) } catch (_: Exception) {}
+                    }
+                    MessageType.PONG -> {
+                        lastPongMs.set(System.currentTimeMillis())
+                    }
+                    else -> {
+                        emit(ProtocolMessage(type = messageType, payload = payload))
+                    }
+                }
             }
         } finally {
             _connected.set(false)
@@ -120,12 +153,51 @@ class TlsMessageChannel(
         }
 
         sendMutex.withLock {
-            // frameLength = 1 (type byte) + payload size
-            val frameLength = 1 + payload.size
-            out.writeInt(frameLength)
+            // 4-byte header = payload size only (type byte is NOT included)
+            out.writeInt(payload.size)
             out.writeByte(message.type.value.toInt())
             if (payload.isNotEmpty()) out.write(payload)
             out.flush()
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // Keepalive
+    // -------------------------------------------------------------------------
+
+    /**
+     * Starts a background keepalive loop within [scope].
+     * Sends a PING every 30 seconds; closes the channel if no PONG arrives within 10 seconds.
+     * Should be called once, immediately after the HANDSHAKE exchange completes.
+     */
+    fun startKeepalive(scope: CoroutineScope) {
+        scope.launch(Dispatchers.IO) {
+            while (isActive && _connected.get()) {
+                delay(KEEPALIVE_INTERVAL_MS)
+                if (!_connected.get()) break
+
+                val pingTime = System.currentTimeMillis()
+                val sendOk = try {
+                    send(ProtocolMessage(MessageType.PING, ByteArray(0)))
+                    true
+                } catch (e: Exception) {
+                    false
+                }
+                if (!sendOk) break
+
+                // Wait for PONG (poll at 250ms intervals up to PONG_TIMEOUT_MS)
+                val deadline = pingTime + PONG_TIMEOUT_MS
+                while (System.currentTimeMillis() < deadline) {
+                    if (lastPongMs.get() >= pingTime) break
+                    delay(250)
+                }
+
+                if (lastPongMs.get() < pingTime) {
+                    // No PONG received — treat as dead connection
+                    close()
+                    break
+                }
+            }
         }
     }
 

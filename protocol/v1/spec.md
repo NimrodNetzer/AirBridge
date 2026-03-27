@@ -43,8 +43,8 @@ Maximum message size: **64 MB** (enforced by receiver; larger payloads must use 
 | 0x11 | `FileChunk` | Sender | A chunk of file data |
 | 0x12 | `FileTransferAck` | Receiver | Acknowledge receipt of chunk(s) |
 | 0x13 | `FileTransferEnd` | Sender | Signal transfer complete, include final hash |
-| 0x20 | `MirrorStart` | Client → Host | Request screen mirror session |
-| 0x21 | `MirrorFrame` | Android → Windows | Encoded H.264 video frame |
+| 0x20 | `MirrorStart` | Initiator → Receiver | Start mirror session (see mode field) |
+| 0x21 | `MirrorFrame` | Source → Sink | Encoded H.264 NAL unit (direction depends on mode) |
 | 0x22 | `MirrorStop` | Both | End mirror session |
 | 0x30 | `InputEvent` | Windows → Android | Mouse / keyboard / touch input relay |
 | 0x40 | `ClipboardSync` | Both | Sync clipboard content |
@@ -120,25 +120,94 @@ Sender                              Receiver
 
 ## Mirror Frame Flow
 
+### PhoneWindow mode (Android → Windows)
+
 ```
-Android                             Windows
+Android (source)                    Windows (sink)
   │──── MirrorStart ───────────────►│
-  │        {sessionId, width,        │
-  │         height, fps, codec}      │
+  │        {sessionId, mode=PhoneWindow,
+  │         width, height, fps, codec}
   │                                  │
   │──── MirrorFrame ───────────────►│  (continuous)
   │        {sessionId, pts,          │
   │         keyframe, data}          │
   │                                  │
-  │◄─── InputEvent ─────────────────│  (user input)
+  │◄─── InputEvent ─────────────────│  (user input relay)
   │        {type, x, y, keycode}     │
   │                                  │
   │◄─── MirrorStop ─────────────────│
 ```
 
-- Codec: H.264 baseline (required), H.265 (optional, negotiated in `MirrorStart`)
+### TabletDisplay mode (Windows → Android)
+
+The direction is reversed: Windows is the source (IddCx virtual monitor), Android
+is the sink (full-screen SurfaceView decoder).
+
+```
+Windows (source/IddCx)               Android (tablet sink)
+  │                                           │
+  │──── MirrorStart {mode=TabletDisplay} ────►│
+  │        {sessionId, width=2560,            │
+  │         height=1600, fps=60, codec=H264}  │
+  │                                           │
+  │──── MirrorFrame (H.264 NAL) ─────────────►│  (stream, 60 fps target)
+  │        {isKeyFrame, ptsUs, nalData}        │
+  │                                           │
+  │──── MirrorStop ──────────────────────────►│
+  │        {reasonCode=0}                     │
+```
+
+**MirrorStart payload fields:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `mode` | uint8 | `0x01` = PhoneWindow, `0x02` = TabletDisplay |
+| `codec` | uint8 | `0x01` = H.264, `0x02` = H.265 |
+| `width` | uint16 | Frame width in pixels |
+| `height` | uint16 | Frame height in pixels |
+| `fps` | uint8 | Target frames per second |
+| `sessionId` | length-prefixed UTF-8 | Unique session identifier |
+
+**MirrorFrame payload fields:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `flags` | uint8 | Bit 0 = isKeyFrame (IDR) |
+| `ptsUs` | int64 | Presentation timestamp in microseconds |
+| `nalLength` | int32 | Length of NAL data |
+| `nalData` | bytes | Raw H.264 NAL unit (Annex-B or raw NALU) |
+
+**IddCx → Named Pipe → TLS channel pipeline (TabletDisplay):**
+
+```
+IddCx swap chain frame
+  │  (D3D11 texture, GPU)
+  ▼
+SwapChainProcessor.cpp
+  │  CopyResource to staging texture → Map → raw BGRA pixels
+  ▼
+H264Encoder.cpp  (MF MFT)
+  │  H.264 NAL output
+  ▼
+\\.\pipe\AirBridgeIdd  [4-byte len][NAL bytes]
+  │
+  ▼
+TabletDisplaySession.cs  (C# host app)
+  │  MirrorFrameMessage{isKeyFrame, ptsUs, nalData}
+  ▼
+TLS channel (ProtocolMessage type=0x21)
+  │
+  ▼
+TabletDisplaySession.kt  (Android)
+  │  MediaCodec H.264 decoder
+  ▼
+SurfaceView (full-screen, TabletDisplayActivity)
+```
+
+- Codec: H.264 Baseline (required), H.265 (optional, negotiated in `MirrorStart`)
 - Frame data is raw NAL units, not containerized
 - PTS (presentation timestamp) in microseconds
+- Target latency: <100 ms on local Wi-Fi (dominated by encoder + network RTT)
 
 ---
 

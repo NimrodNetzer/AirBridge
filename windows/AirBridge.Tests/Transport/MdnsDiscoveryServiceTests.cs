@@ -171,10 +171,10 @@ public class MdnsDiscoveryServiceTests
     }
 
     [Fact]
-    public void StopAsync_WhenNotStarted_IsIdempotent()
+    public async Task StopAsync_WhenNotStarted_IsIdempotent()
     {
         using var svc = new MdnsDiscoveryService("id-3", "Test PC", DeviceType.WindowsPc);
-        var ex = Record.Exception(() => svc.StopAsync().GetAwaiter().GetResult());
+        var ex = await Record.ExceptionAsync(() => svc.StopAsync());
         Assert.Null(ex);
     }
 }

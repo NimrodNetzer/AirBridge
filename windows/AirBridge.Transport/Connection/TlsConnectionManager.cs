@@ -3,7 +3,10 @@ using System.Net.Security;
 using System.Net.Sockets;
 using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
+using System.Text;
+using System.Text.Json;
 using AirBridge.Core.Models;
+using AirBridge.Core.Pairing;
 using AirBridge.Transport.Interfaces;
 using AirBridge.Transport.Protocol;
 
@@ -22,16 +25,22 @@ namespace AirBridge.Transport.Connection;
 /// pinning (Ed25519 keys, mutual TLS with stored peer certificates).
 /// </para>
 /// <para>
-/// All accepted connections are wrapped in a <see cref="TlsMessageChannel"/> and exposed
-/// via the <see cref="ConnectionReceived"/> event.  The initial
-/// <see cref="RemoteDeviceId"/> on the channel is a placeholder; higher layers should
-/// update it after the handshake message exchange.
+/// Immediately after every TLS handshake (both inbound and outbound), a HANDSHAKE
+/// message (type 0x01) is exchanged.  Each side sends its own device identity as
+/// UTF-8 JSON and reads the peer's identity to populate
+/// <see cref="TlsMessageChannel.RemoteDeviceId"/>.
+/// </para>
+/// <para>
+/// A PING/PONG keepalive loop is started on each channel after the HANDSHAKE exchange.
 /// </para>
 /// </remarks>
 public sealed class TlsConnectionManager : IConnectionManager
 {
     // ── Configuration ──────────────────────────────────────────────────────
-    private readonly int _port;
+    private readonly int     _port;
+    private readonly KeyStore? _keyStore;
+    private readonly string  _localDeviceId;
+    private readonly string  _localDeviceName;
 
     // ── Runtime state ──────────────────────────────────────────────────────
     private TcpListener?         _listener;
@@ -53,14 +62,35 @@ public sealed class TlsConnectionManager : IConnectionManager
     /// <summary>
     /// Initialises the connection manager.
     /// </summary>
+    /// <param name="localDeviceId">
+    /// Stable UUID that identifies this Windows device across connections.
+    /// </param>
+    /// <param name="localDeviceName">
+    /// Human-readable name of this device (e.g. <see cref="Environment.MachineName"/>).
+    /// </param>
+    /// <param name="keyStore">
+    /// Optional <see cref="KeyStore"/> used to persist the TLS certificate across restarts.
+    /// When provided, the same certificate is reused on every start so peers can pin its
+    /// fingerprint for TOFU.  When null, a fresh certificate is generated each run (scaffold mode).
+    /// </param>
     /// <param name="port">
     /// TCP port to listen on.  Defaults to <see cref="ProtocolMessage.DefaultPort"/> (47821).
     /// </param>
-    public TlsConnectionManager(int port = ProtocolMessage.DefaultPort)
+    public TlsConnectionManager(
+        string    localDeviceId,
+        string    localDeviceName,
+        KeyStore? keyStore = null,
+        int       port     = ProtocolMessage.DefaultPort)
     {
+        if (string.IsNullOrWhiteSpace(localDeviceId))
+            throw new ArgumentException("Device ID must not be empty.", nameof(localDeviceId));
         if (port is < 1 or > 65535)
             throw new ArgumentOutOfRangeException(nameof(port));
-        _port = port;
+
+        _localDeviceId   = localDeviceId;
+        _localDeviceName = localDeviceName ?? Environment.MachineName;
+        _port            = port;
+        _keyStore        = keyStore;
     }
 
     // ── IConnectionManager ─────────────────────────────────────────────────
@@ -78,7 +108,7 @@ public sealed class TlsConnectionManager : IConnectionManager
             if (_listening) return;
             ThrowIfDisposed();
 
-            _certificate = CreateSelfSignedCertificate();
+            _certificate = await LoadOrCreateCertificateAsync().ConfigureAwait(false);
             _listenerCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
 
             _listener = new TcpListener(IPAddress.Any, _port);
@@ -115,6 +145,8 @@ public sealed class TlsConnectionManager : IConnectionManager
     /// Opens an outbound TLS 1.3 connection to <paramref name="remoteDevice"/>.
     /// The remote certificate is accepted without validation in this iteration;
     /// Iteration 3 replaces this with TOFU key pinning.
+    /// After TLS authentication, a HANDSHAKE message is exchanged with the peer
+    /// and the channel's <see cref="TlsMessageChannel.RemoteDeviceId"/> is updated.
     /// </remarks>
     public async Task<IMessageChannel> ConnectAsync(
         DeviceInfo remoteDevice,
@@ -123,7 +155,7 @@ public sealed class TlsConnectionManager : IConnectionManager
         ArgumentNullException.ThrowIfNull(remoteDevice);
         ThrowIfDisposed();
 
-        var cert = _certificate ?? CreateSelfSignedCertificate();
+        var cert = _certificate ?? CreateSelfSignedCertificate(); // lazily ensure cert exists for outbound-only use
 
         var tcpClient = new TcpClient();
         try
@@ -148,7 +180,9 @@ public sealed class TlsConnectionManager : IConnectionManager
                            .ConfigureAwait(false);
 
             var channel = new TlsMessageChannel(sslStream, remoteDevice.DeviceId);
+            await PerformHandshakeAsync(channel, cancellationToken).ConfigureAwait(false);
             TrackChannel(channel);
+            channel.StartKeepaliveAsync(cancellationToken);
             return channel;
         }
         catch
@@ -210,15 +244,64 @@ public sealed class TlsConnectionManager : IConnectionManager
             await sslStream.AuthenticateAsServerAsync(serverOptions, cancellationToken)
                            .ConfigureAwait(false);
 
-            // Remote device ID is unknown until Handshake — use a placeholder
+            // Use IP as placeholder until HANDSHAKE reveals the stable device ID
             var remoteEndpoint = tcpClient.Client.RemoteEndPoint?.ToString() ?? "unknown";
             var channel = new TlsMessageChannel(sslStream, remoteEndpoint);
+            await PerformHandshakeAsync(channel, cancellationToken).ConfigureAwait(false);
             TrackChannel(channel);
+            channel.StartKeepaliveAsync(cancellationToken);
             ConnectionReceived?.Invoke(this, channel);
         }
         catch
         {
             tcpClient.Dispose();
+        }
+    }
+
+    /// <summary>
+    /// Exchanges HANDSHAKE messages with the peer.  Each side sends its own identity
+    /// and receives the peer's identity.  Updates <paramref name="channel"/>'s
+    /// <see cref="TlsMessageChannel.RemoteDeviceId"/> with the received device ID.
+    /// </summary>
+    private async Task PerformHandshakeAsync(TlsMessageChannel channel, CancellationToken cancellationToken)
+    {
+        // Build local identity payload
+        var identityJson = JsonSerializer.Serialize(new
+        {
+            deviceId   = _localDeviceId,
+            deviceName = _localDeviceName,
+            deviceType = "windows_pc"
+        });
+        var payload = Encoding.UTF8.GetBytes(identityJson);
+        var handshakeMsg = new ProtocolMessage(MessageType.Handshake, payload);
+
+        // Send our identity and receive the peer's identity concurrently to avoid deadlock
+        // when both sides send before reading.
+        var sendTask    = channel.SendAsync(handshakeMsg, cancellationToken);
+        var receiveTask = channel.ReceiveAsync(cancellationToken);
+
+        await Task.WhenAll(sendTask, receiveTask).ConfigureAwait(false);
+
+        var received = receiveTask.Result;
+        if (received is null) return; // peer closed before handshake
+
+        if (received.Type == MessageType.Handshake && received.Payload.Length > 0)
+        {
+            try
+            {
+                var json = Encoding.UTF8.GetString(received.Payload);
+                using var doc = JsonDocument.Parse(json);
+                if (doc.RootElement.TryGetProperty("deviceId", out var idProp))
+                {
+                    var peerId = idProp.GetString();
+                    if (!string.IsNullOrEmpty(peerId))
+                        channel.RemoteDeviceId = peerId;
+                }
+            }
+            catch (JsonException)
+            {
+                // Malformed JSON — keep the IP-address placeholder; do not abort connection
+            }
         }
     }
 
@@ -255,26 +338,50 @@ public sealed class TlsConnectionManager : IConnectionManager
     }
 
     /// <summary>
-    /// Creates a self-signed RSA certificate for temporary use.
+    /// Returns the persisted TLS certificate from the <see cref="KeyStore"/>, or generates
+    /// a new self-signed certificate and persists it so the same identity is reused on the
+    /// next start.  When no <see cref="KeyStore"/> is injected the certificate is ephemeral
+    /// (scaffold / test mode).
     /// </summary>
-    /// <remarks>
-    /// <b>SCAFFOLD NOTE:</b> This certificate is regenerated every time
-    /// <see cref="StartListeningAsync"/> is called and provides no persistent identity.
-    /// Iteration 3 replaces this with long-lived Ed25519 key pairs stored in the
-    /// platform credential store, enabling TOFU pairing.
-    /// </remarks>
+    private async Task<X509Certificate2> LoadOrCreateCertificateAsync()
+    {
+        if (_keyStore is not null)
+        {
+            var stored = _keyStore.GetTlsCertificatePfx();
+            if (stored is not null)
+            {
+                return new X509Certificate2(
+                    stored,
+                    (string?)null,
+                    X509KeyStorageFlags.Exportable);
+            }
+        }
+
+        // Generate a new certificate and (if KeyStore is available) persist it.
+        var cert = CreateSelfSignedCertificate();
+        if (_keyStore is not null)
+        {
+            var pfxBytes = cert.Export(X509ContentType.Pfx);
+            await _keyStore.StoreTlsCertificatePfxAsync(pfxBytes).ConfigureAwait(false);
+        }
+        return cert;
+    }
+
+    /// <summary>
+    /// Creates a self-signed RSA certificate for use as the local TLS identity.
+    /// </summary>
     private static X509Certificate2 CreateSelfSignedCertificate()
     {
         using var rsa = RSA.Create(2048);
         var req = new CertificateRequest(
-            "CN=AirBridge-Scaffold",
+            "CN=AirBridge",
             rsa,
             HashAlgorithmName.SHA256,
             RSASignaturePadding.Pkcs1);
 
         var cert = req.CreateSelfSigned(
             DateTimeOffset.UtcNow.AddMinutes(-1),
-            DateTimeOffset.UtcNow.AddYears(1));
+            DateTimeOffset.UtcNow.AddYears(10));
 
         // Export/re-import to get a certificate with private key accessible via SslStream
         return new X509Certificate2(

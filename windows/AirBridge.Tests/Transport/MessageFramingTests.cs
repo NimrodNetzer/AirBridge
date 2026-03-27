@@ -111,11 +111,11 @@ public class MessageFramingTests
 
         // Act — read manually (mirrors TlsMessageChannel.ReceiveAsync logic)
         var header   = new byte[4];
-        await ms.ReadExactlyAsync(header).ConfigureAwait(false);
+        await ms.ReadExactlyAsync(header);
         uint len = BinaryPrimitives.ReadUInt32BigEndian(header);
 
         var body = new byte[1 + len];
-        await ms.ReadExactlyAsync(body).ConfigureAwait(false);
+        await ms.ReadExactlyAsync(body);
 
         var type     = (MessageType)body[0];
         var received = body[1..];

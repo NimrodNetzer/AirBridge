@@ -1,14 +1,25 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
-  <ItemGroup>
-    <ProjectReference Include="..\AirBridge.Core\AirBridge.Core.csproj" />
-    <ProjectReference Include="..\AirBridge.Transport\AirBridge.Transport.csproj" />
-  </ItemGroup>
-
   <PropertyGroup>
     <TargetFramework>net8.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
+    <Platforms>AnyCPU;x64</Platforms>
   </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\AirBridge.Core\AirBridge.Core.csproj" />
+    <ProjectReference Include="..\AirBridge.Transport\AirBridge.Transport.csproj" />
+    <ProjectReference Include="..\AirBridge.Transfer\AirBridge.Transfer.csproj" />
+  </ItemGroup>
+
+  <!-- MirrorWindow.cs and MirrorDecoder.cs depend on WinUI 3 / Windows App SDK
+       WinRT APIs (SoftwareBitmap, MediaStreamSource, etc.) which are only
+       available in the net8.0-windows App project.  Exclude them here so the
+       plain net8.0 library compiles without those dependencies. -->
+  <ItemGroup>
+    <Compile Remove="MirrorWindow.cs" />
+    <Compile Remove="MirrorDecoder.cs" />
+  </ItemGroup>
 
 </Project>

@@ -222,11 +222,11 @@ Each major feature module is implemented by a dedicated agent on its own branch.
 | Iteration | Focus | Branches |
 |-----------|-------|---------|
 | **1 — Scaffold** ✅ | Solution structure, interfaces, CI, protocol spec | `dev` |
-| **2 — Transport** | mDNS discovery + TLS sockets on both platforms | `feature/windows-transport`, `feature/android-transport` (parallel) |
-| **3 — Pairing** | TOFU key exchange + PIN confirmation flow | `feature/pairing-flow` |
-| **4 — File Transfer** | Chunked transfer engine, UI | `feature/file-transfer` |
-| **5 — Mirror MVP** | Phone screen as floating window (view only) | `feature/screen-mirror` |
-| **6 — Mirror Full** | Input relay, drag-and-drop, IddCx tablet display | `feature/screen-mirror` |
+| **2 — Transport** ✅ | mDNS discovery + TLS sockets on both platforms | merged to `dev` |
+| **3 — Pairing** ✅ | TOFU key exchange + PIN confirmation flow | merged to `dev` |
+| **4 — File Transfer** ✅ | Chunked transfer engine, SHA-256, resume, transfer queue | merged to `dev` |
+| **5 — Mirror MVP** ✅ | Phone screen as floating window (view only) | merged to `dev` |
+| **6 — Mirror Full** ✅ | Input relay, drag-and-drop, IddCx tablet display | merged to `dev` |
 | **7 — Polish** | Unified UI, installer, performance, security audit | `dev` → `main` |
 
 ---
@@ -234,13 +234,17 @@ Each major feature module is implemented by a dedicated agent on its own branch.
 ## Current Status
 
 - [x] CLAUDE.md — project reference document
-- [x] Branch strategy — 6 branches created and documented
+- [x] Branch strategy — documented and maintained
 - [x] Iteration 1 — Project scaffold (solution structure, interfaces, CI, protocol spec)
 - [x] Iteration 2 — Transport layer (mDNS + TLS) — merged to `dev`
-- [x] Iteration 3 — Pairing flow (Ed25519 TOFU, PIN, KeyStore) — on `feature/pairing-flow`, pending merge to `dev`
-- [ ] Iteration 4 — File transfer
-- [ ] Iteration 5/6 — Screen mirroring
+- [x] Iteration 3 — Pairing flow (Ed25519 TOFU, PIN, KeyStore) — merged to `dev`
+- [x] Iteration 4 — File transfer (chunked, SHA-256, resume, transfer queue) — merged to `dev`
+- [x] Iteration 5 — Screen Mirror MVP (view-only phone floating window) — merged to `dev`
+- [x] Iteration 6 — Mirror Full (input relay, drag-and-drop, IddCx tablet display) — merged to `dev`
 - [ ] Iteration 7 — Polish + release
+
+**Git state:** only `dev` and `main` branches exist. `dev` is 19 commits ahead of `main`.
+`main` will be updated at the Iteration 7 milestone release.
 
 ---
 

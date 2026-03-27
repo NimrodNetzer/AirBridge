@@ -42,7 +42,7 @@ public class TransferSessionTests
         var senderTask   = sender.StartAsync(ct);
         var receiverTask = receiver.StartAsync(ct);
 
-        await Task.WhenAll(senderTask, receiverTask).ConfigureAwait(false);
+        await Task.WhenAll(senderTask, receiverTask);
 
         return sinkStream.ToArray();
     }
@@ -112,7 +112,7 @@ public class TransferSessionTests
     public async Task LoopbackTransfer_SmallFile_DataMatchesAndHashVerified()
     {
         var fileData = System.Text.Encoding.UTF8.GetBytes("Hello, AirBridge! This is a small test file.");
-        var received = await LoopbackTransferAsync(fileData).ConfigureAwait(false);
+        var received = await LoopbackTransferAsync(fileData);
 
         Assert.Equal(fileData, received);
     }
@@ -124,7 +124,7 @@ public class TransferSessionTests
         var fileData = new byte[TransferSession.ChunkSize];
         Random.Shared.NextBytes(fileData);
 
-        var received = await LoopbackTransferAsync(fileData).ConfigureAwait(false);
+        var received = await LoopbackTransferAsync(fileData);
 
         Assert.Equal(fileData.Length, received.Length);
         Assert.Equal(SHA256.HashData(fileData), SHA256.HashData(received));
@@ -137,7 +137,7 @@ public class TransferSessionTests
         var fileData = new byte[200 * 1024];
         Random.Shared.NextBytes(fileData);
 
-        var received = await LoopbackTransferAsync(fileData).ConfigureAwait(false);
+        var received = await LoopbackTransferAsync(fileData);
 
         Assert.Equal(SHA256.HashData(fileData), SHA256.HashData(received));
     }
@@ -145,7 +145,7 @@ public class TransferSessionTests
     [Fact]
     public async Task LoopbackTransfer_EmptyFile_Succeeds()
     {
-        var received = await LoopbackTransferAsync(Array.Empty<byte>()).ConfigureAwait(false);
+        var received = await LoopbackTransferAsync(Array.Empty<byte>());
         Assert.Empty(received);
     }
 
@@ -162,7 +162,7 @@ public class TransferSessionTests
         var sender   = new TransferSession(sid, "f.bin", 2, true,  source, pipe.Writer.AsStream());
         var receiver = new TransferSession(sid, "f.bin", 2, false, sink,   pipe.Reader.AsStream());
 
-        await Task.WhenAll(sender.StartAsync(), receiver.StartAsync()).ConfigureAwait(false);
+        await Task.WhenAll(sender.StartAsync(), receiver.StartAsync());
 
         Assert.Equal(TransferState.Completed, sender.State);
         Assert.Equal(TransferState.Completed, receiver.State);
@@ -184,14 +184,14 @@ public class TransferSessionTests
         var receiverTask = receiver.StartAsync(cts.Token);
 
         // Cancel almost immediately
-        await Task.Delay(5).ConfigureAwait(false);
-        await cts.CancelAsync().ConfigureAwait(false);
+        await Task.Delay(5);
+        await cts.CancelAsync();
 
         // Both tasks should complete without throwing (cancellation is handled internally)
         await Task.WhenAll(
             senderTask.ContinueWith(_ => { }),
             receiverTask.ContinueWith(_ => { })
-        ).ConfigureAwait(false);
+        );
     }
 
     [Fact]
