@@ -18,6 +18,11 @@ namespace AirBridge.Transport.Connection;
 /// </para>
 /// <para>Sends are serialised with a <see cref="SemaphoreSlim"/> so callers may
 /// call <see cref="SendAsync"/> concurrently from multiple threads.</para>
+/// <para>
+/// PING (0xF0) / PONG (0xF1) keepalive frames are handled internally and never
+/// surfaced to callers via <see cref="ReceiveAsync"/>.  Call
+/// <see cref="StartKeepaliveAsync"/> after construction to enable the keepalive loop.
+/// </para>
 /// </summary>
 public sealed class TlsMessageChannel : IMessageChannel
 {
@@ -26,8 +31,23 @@ public sealed class TlsMessageChannel : IMessageChannel
     private volatile bool _connected = true;
     private bool _disposed;
 
-    /// <inheritdoc/>
-    public string RemoteDeviceId { get; }
+    // ── Keepalive state ────────────────────────────────────────────────────
+    private static readonly TimeSpan KeepaliveInterval = TimeSpan.FromSeconds(30);
+    private static readonly TimeSpan PongTimeout       = TimeSpan.FromSeconds(10);
+
+    /// <summary>
+    /// UTC timestamp of the last PONG received from the peer.
+    /// Updated by the receive loop whenever a PONG arrives.
+    /// </summary>
+    private DateTime _lastPongUtc = DateTime.UtcNow;
+
+    // ── IMessageChannel ────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Identifier of the remote peer.  Set to the peer's IP address initially;
+    /// updated to the peer's stable device ID after the HANDSHAKE exchange.
+    /// </summary>
+    public string RemoteDeviceId { get; internal set; }
 
     /// <inheritdoc/>
     public bool IsConnected => _connected;
@@ -91,6 +111,7 @@ public sealed class TlsMessageChannel : IMessageChannel
     /// <returns>
     /// The next <see cref="ProtocolMessage"/>, or <c>null</c> if the peer closed
     /// the connection cleanly (zero bytes read on the header).
+    /// PING and PONG messages are handled internally and are never returned to callers.
     /// </returns>
     /// <exception cref="InvalidDataException">
     /// Thrown when the payload length in the frame header exceeds
@@ -98,54 +119,133 @@ public sealed class TlsMessageChannel : IMessageChannel
     /// </exception>
     public async Task<ProtocolMessage?> ReceiveAsync(CancellationToken cancellationToken = default)
     {
-        // ── Read 4-byte length header ──────────────────────────────────────
-        var header = new byte[4];
-        int bytesRead;
+        while (true)
+        {
+            // ── Read 4-byte length header ──────────────────────────────────────
+            var header = new byte[4];
+            int bytesRead;
+            try
+            {
+                bytesRead = await ReadExactAsync(_stream, header, cancellationToken).ConfigureAwait(false);
+            }
+            catch (Exception ex) when (IsNetworkException(ex))
+            {
+                SignalDisconnect();
+                throw;
+            }
+
+            if (bytesRead == 0)
+            {
+                // Clean close from remote side
+                _connected = false;
+                return null;
+            }
+
+            uint payloadLength = BinaryPrimitives.ReadUInt32BigEndian(header);
+
+            if (payloadLength > ProtocolMessage.MaxPayloadBytes)
+                throw new InvalidDataException(
+                    $"Incoming payload length {payloadLength} exceeds MaxPayloadBytes ({ProtocolMessage.MaxPayloadBytes}).");
+
+            // ── Read 1-byte message type + payload ────────────────────────────
+            var body = new byte[1 + payloadLength];
+            try
+            {
+                bytesRead = await ReadExactAsync(_stream, body, cancellationToken).ConfigureAwait(false);
+            }
+            catch (Exception ex) when (IsNetworkException(ex))
+            {
+                SignalDisconnect();
+                throw;
+            }
+
+            if (bytesRead == 0)
+            {
+                _connected = false;
+                return null;
+            }
+
+            var type    = (MessageType)body[0];
+            var payload = body[1..];
+
+            // ── Keepalive intercept ───────────────────────────────────────────
+            if (type == MessageType.Ping)
+            {
+                // Reply with PONG immediately; do not surface PING to caller
+                try
+                {
+                    await SendAsync(
+                        new ProtocolMessage(MessageType.Pong, Array.Empty<byte>()),
+                        cancellationToken).ConfigureAwait(false);
+                }
+                catch { /* best-effort; if send fails the loop will catch it on next read */ }
+                continue; // read next message
+            }
+
+            if (type == MessageType.Pong)
+            {
+                _lastPongUtc = DateTime.UtcNow;
+                continue; // do not surface PONG to caller
+            }
+
+            return new ProtocolMessage(type, payload);
+        }
+    }
+
+    // ── Keepalive ──────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Starts a background keepalive loop that sends a PING every 30 seconds and
+    /// closes the channel if no PONG arrives within 10 seconds.
+    /// Should be called once, immediately after the HANDSHAKE exchange completes.
+    /// </summary>
+    /// <param name="cancellationToken">
+    /// Token that, when cancelled, gracefully terminates the keepalive loop.
+    /// </param>
+    public Task StartKeepaliveAsync(CancellationToken cancellationToken) =>
+        Task.Run(() => KeepaliveLoopAsync(cancellationToken), cancellationToken);
+
+    private async Task KeepaliveLoopAsync(CancellationToken cancellationToken)
+    {
         try
         {
-            bytesRead = await ReadExactAsync(_stream, header, cancellationToken).ConfigureAwait(false);
+            while (!cancellationToken.IsCancellationRequested && _connected)
+            {
+                await Task.Delay(KeepaliveInterval, cancellationToken).ConfigureAwait(false);
+
+                if (!_connected) break;
+
+                var pingTime = DateTime.UtcNow;
+                try
+                {
+                    await SendAsync(
+                        new ProtocolMessage(MessageType.Ping, Array.Empty<byte>()),
+                        cancellationToken).ConfigureAwait(false);
+                }
+                catch
+                {
+                    // Send failure already signals disconnect; stop the loop
+                    break;
+                }
+
+                // Wait for PONG (poll at 250ms intervals up to PongTimeout)
+                var deadline = pingTime + PongTimeout;
+                while (DateTime.UtcNow < deadline)
+                {
+                    if (_lastPongUtc >= pingTime) break;
+                    await Task.Delay(250, cancellationToken).ConfigureAwait(false);
+                }
+
+                if (_lastPongUtc < pingTime)
+                {
+                    // No PONG received within timeout — treat as dead connection
+                    SignalDisconnect();
+                    await DisposeAsync().ConfigureAwait(false);
+                    break;
+                }
+            }
         }
-        catch (Exception ex) when (IsNetworkException(ex))
-        {
-            SignalDisconnect();
-            throw;
-        }
-
-        if (bytesRead == 0)
-        {
-            // Clean close from remote side
-            _connected = false;
-            return null;
-        }
-
-        uint payloadLength = BinaryPrimitives.ReadUInt32BigEndian(header);
-
-        if (payloadLength > ProtocolMessage.MaxPayloadBytes)
-            throw new InvalidDataException(
-                $"Incoming payload length {payloadLength} exceeds MaxPayloadBytes ({ProtocolMessage.MaxPayloadBytes}).");
-
-        // ── Read 1-byte message type + payload ────────────────────────────
-        var body = new byte[1 + payloadLength];
-        try
-        {
-            bytesRead = await ReadExactAsync(_stream, body, cancellationToken).ConfigureAwait(false);
-        }
-        catch (Exception ex) when (IsNetworkException(ex))
-        {
-            SignalDisconnect();
-            throw;
-        }
-
-        if (bytesRead == 0)
-        {
-            _connected = false;
-            return null;
-        }
-
-        var type    = (MessageType)body[0];
-        var payload = body[1..];
-
-        return new ProtocolMessage(type, payload);
+        catch (OperationCanceledException) { /* normal shutdown */ }
     }
 
     // ── IAsyncDisposable ───────────────────────────────────────────────────
