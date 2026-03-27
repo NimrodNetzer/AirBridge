@@ -18,6 +18,7 @@ import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import java.util.concurrent.ConcurrentHashMap
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -34,13 +35,15 @@ data class InboundPairingRequest(
 )
 
 /**
- * Routes inbound connections from [IConnectionManager.incomingConnections].
+ * Routes inbound connections from [IConnectionManager.incomingConnections] and tracks the
+ * currently active [IMessageChannel] for each connected device.
  *
  * When a new inbound channel arrives the service peeks at the first message:
  * - **PAIRING_REQUEST** → hands the channel to [IPairingService.acceptPairingOnChannel] and
  *   emits an [InboundPairingRequest] on [incomingPairingRequests] so the UI can display the PIN.
- * - All other message types → emits the channel on [establishedChannels] for higher-level
- *   feature services (file transfer, mirror, etc.) to consume.
+ *   On success the channel is registered as the active session.
+ * - All other message types → the device is already paired; register the channel directly as
+ *   an active session and emit on [establishedChannels] for feature services.
  *
  * The service is a singleton and must be started by calling [start] once the app is ready to
  * accept connections (typically from [MainActivity] or a Hilt entry-point).
@@ -52,6 +55,24 @@ class DeviceConnectionService @Inject constructor(
 ) {
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+    // ── Active session registry ───────────────────────────────────────────
+
+    private val _sessions = ConcurrentHashMap<String, IMessageChannel>()
+
+    /**
+     * Returns the active [IMessageChannel] for [deviceId], or null if none is open.
+     */
+    fun getActiveSession(deviceId: String): IMessageChannel? = _sessions[deviceId]
+
+    /**
+     * Reactive set of device IDs that currently have an open session.
+     * Updates whenever a session is opened or closed.
+     */
+    private val _connectedDeviceIds = MutableStateFlow<Set<String>>(emptySet())
+    val connectedDeviceIds: StateFlow<Set<String>> = _connectedDeviceIds.asStateFlow()
+
+    // ── Existing flows ────────────────────────────────────────────────────
 
     /** Emits whenever a remote device initiates a pairing handshake with this device. */
     private val _incomingPairingRequests = MutableSharedFlow<InboundPairingRequest>()
@@ -79,9 +100,44 @@ class DeviceConnectionService @Inject constructor(
         }
     }
 
-    // -------------------------------------------------------------------------
-    // Private routing logic
-    // -------------------------------------------------------------------------
+    /**
+     * Connects to an already-paired [device] without running the pairing handshake,
+     * then registers the resulting channel as the active session.
+     */
+    suspend fun connectToPairedDevice(device: DeviceInfo) {
+        val channel = connectionManager.connect(device)
+        registerSession(device.deviceId, channel)
+        _establishedChannels.emit(channel)
+    }
+
+    /**
+     * Registers [channel] as the active session for [deviceId] and starts monitoring
+     * it for disconnection. Replaces any previous session for the same device.
+     *
+     * Call this after outbound pairing succeeds to keep the pairing channel alive.
+     */
+    fun registerSession(deviceId: String, channel: IMessageChannel) {
+        _sessions[deviceId] = channel
+        _connectedDeviceIds.value = _connectedDeviceIds.value + deviceId
+
+        // Monitor the channel lifecycle in a background coroutine.
+        scope.launch {
+            try {
+                // Collect until the flow completes (channel closed cleanly) or throws.
+                channel.incomingMessages.collect { /* keep-alive drain; feature services
+                                                      collect their own messages */ }
+            } catch (_: Exception) {
+                // Transport error — treat as disconnect.
+            } finally {
+                // Only remove if this is still the registered session to avoid evicting a
+                // freshly-registered replacement session for the same device.
+                _sessions.remove(deviceId, channel)
+                _connectedDeviceIds.value = _connectedDeviceIds.value - deviceId
+            }
+        }
+    }
+
+    // ── Private routing logic ─────────────────────────────────────────────
 
     private suspend fun routeChannel(channel: IMessageChannel) {
         try {
@@ -104,15 +160,18 @@ class DeviceConnectionService @Inject constructor(
 
                     // Drive the handshake, passing the already-read first message so
                     // acceptPairingOnChannel doesn't attempt a second read of the same socket.
-                    // The UI calls pairingService.confirmPairing() to resolve the
-                    // CompletableDeferred inside acceptPairingOnChannel.
                     val result = pairingService.acceptPairingOnChannel(device, channel, firstMessage)
                     _lastInboundPairingResult.value = result
+
+                    // On success, keep the channel alive as the active session.
+                    if (result == PairingResult.SUCCESS || result == PairingResult.ALREADY_PAIRED) {
+                        registerSession(channel.remoteDeviceId, channel)
+                    }
                 }
 
                 else -> {
-                    // Re-expose the channel for feature services; they can inspect the first
-                    // message if needed via their own flow collection.
+                    // Already-paired device reconnecting — register as active session.
+                    registerSession(channel.remoteDeviceId, channel)
                     _establishedChannels.emit(channel)
                 }
             }

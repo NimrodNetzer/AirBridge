@@ -111,6 +111,37 @@ public sealed partial class TransferViewModel : ObservableObject
     {
         _transfer   = transfer;
         _connection = connection;
+
+        // Reactively reflect session state changes from DeviceConnectionService.
+        _connection.DeviceConnected    += OnDeviceConnected;
+        _connection.DeviceDisconnected += OnDeviceDisconnected;
+
+        // Reflect any already-connected device from before this ViewModel was created.
+        var existingId = _connection.ConnectedDeviceIds.FirstOrDefault();
+        if (existingId is not null)
+        {
+            _channel            = _connection.GetActiveSession(existingId);
+            ConnectedDeviceName = existingId;
+            CanSend             = _channel is not null;
+        }
+    }
+
+    private void OnDeviceConnected(object? sender, string deviceId)
+    {
+        _channel = _connection.GetActiveSession(deviceId);
+        ConnectedDeviceName = deviceId;
+        CanSend = _channel is not null;
+    }
+
+    private void OnDeviceDisconnected(object? sender, string deviceId)
+    {
+        // Only clear if the disconnected device was our current target.
+        if (_channel is not null && _channel.RemoteDeviceId == deviceId)
+        {
+            _channel            = null;
+            ConnectedDeviceName = "No device connected";
+            CanSend             = false;
+        }
     }
 
     /// <summary>Sets the active connection target. Enables the Send button.</summary>
