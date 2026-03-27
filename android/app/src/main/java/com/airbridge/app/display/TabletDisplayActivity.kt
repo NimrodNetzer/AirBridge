@@ -1,7 +1,7 @@
 package com.airbridge.app.display
 
-import android.app.Activity
 import android.os.Bundle
+import androidx.appcompat.app.AppCompatActivity
 import android.view.SurfaceHolder
 import android.view.SurfaceView
 import android.view.Window
@@ -9,12 +9,10 @@ import android.view.WindowInsetsController
 import android.view.WindowManager
 import com.airbridge.app.mirror.TabletDisplaySession
 import com.airbridge.app.transport.interfaces.IMessageChannel
-import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
-import javax.inject.Inject
 
 /**
  * Full-screen activity that renders the Windows virtual display stream on the
@@ -45,11 +43,9 @@ import javax.inject.Inject
  * The [IMessageChannel] is injected by Hilt. In production it is the live TLS
  * channel to the paired Windows host; in tests it can be replaced with a mock.
  */
-@AndroidEntryPoint
-class TabletDisplayActivity : Activity(), SurfaceHolder.Callback {
+class TabletDisplayActivity : AppCompatActivity(), SurfaceHolder.Callback {
 
-    @Inject
-    lateinit var channel: IMessageChannel
+    private lateinit var channel: IMessageChannel
 
     // ── Internal ───────────────────────────────────────────────────────────
 
@@ -61,6 +57,10 @@ class TabletDisplayActivity : Activity(), SurfaceHolder.Callback {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        // Channel is passed via companion object by the caller before startActivity()
+        channel = pendingChannel ?: run { finish(); return }
+        pendingChannel = null
 
         // Remove title bar and go full-screen
         requestWindowFeature(Window.FEATURE_NO_TITLE)
@@ -144,5 +144,11 @@ class TabletDisplayActivity : Activity(), SurfaceHolder.Callback {
     companion object {
         /** Optional Intent extra: pre-assigned session ID from the host. */
         const val EXTRA_SESSION_ID = "com.airbridge.app.extra.SESSION_ID"
+
+        /**
+         * Set this before calling [startActivity] with [TabletDisplayActivity].
+         * Cleared automatically when the activity is created.
+         */
+        var pendingChannel: IMessageChannel? = null
     }
 }

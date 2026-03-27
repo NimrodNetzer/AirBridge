@@ -4,7 +4,9 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.airbridge.app.core.interfaces.IDeviceRegistry
 import com.airbridge.app.core.models.DeviceInfo
+import com.airbridge.app.core.models.DeviceType
 import com.airbridge.app.transport.interfaces.IDiscoveryService
+import com.airbridge.app.transport.protocol.ProtocolMessage
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -44,6 +46,8 @@ class DevicesViewModel @Inject constructor(
                 _devices.value = list
             }
         }
+        // Auto-start scanning so the user sees devices without tapping the search icon.
+        startScan()
     }
 
     /** Starts mDNS discovery and merges discovered devices into the registry. */
@@ -81,6 +85,22 @@ class DevicesViewModel @Inject constructor(
         }
         _isScanning.value = false
         _statusMessage.value = "Scan stopped"
+    }
+
+    /** Adds a device by manual IP entry and returns its deviceId for navigation. */
+    fun addManualDevice(ip: String): String {
+        val trimmed = ip.trim()
+        val deviceId = "manual-$trimmed"
+        val device = DeviceInfo(
+            deviceId   = deviceId,
+            deviceName = trimmed,
+            deviceType = DeviceType.WINDOWS_PC,
+            ipAddress  = trimmed,
+            port       = ProtocolMessage.DEFAULT_PORT,
+            isPaired   = false
+        )
+        deviceRegistry.addOrUpdate(device)
+        return deviceId
     }
 
     override fun onCleared() {

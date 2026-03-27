@@ -25,23 +25,23 @@ public class MirrorSessionTests
     /// </summary>
     private sealed class StubDecoder : IMirrorDecoder
     {
-        public int SubmitCount  { get; private set; }
-        public bool Initialized { get; private set; }
+        public int  SubmitCount { get; private set; }
         public bool Disposed    { get; private set; }
 
-        public Task InitializeAsync(int width, int height)
+        public event EventHandler? FrameReady;
+
+        public Task PushFrameAsync(byte[] frameData, CancellationToken cancellationToken = default)
         {
-            Initialized = true;
+            SubmitCount++;
+            FrameReady?.Invoke(this, EventArgs.Empty);
             return Task.CompletedTask;
         }
 
-        public DecodeResult SubmitNalUnit(byte[] nalData, long timestampMs, bool isKeyFrame)
+        public void Dispose()
         {
-            SubmitCount++;
-            return DecodeResult.Success;
+            Disposed = true;
+            FrameReady = null;
         }
-
-        public void Dispose() => Disposed = true;
     }
 
     // ── Helpers ────────────────────────────────────────────────────────────
@@ -88,7 +88,7 @@ public class MirrorSessionTests
     [Fact]
     public async Task StartAsync_ReceivesMirrorStart_TransitionsToActive()
     {
-        var startMsg = new MirrorStartMessage("sid-1", 1080, 1920, 30, "H264");
+        var startMsg = new MirrorStartMessage(MirrorSessionMode.PhoneWindow, MirrorCodec.H264, 1920, 1080, 30, "sid-1");
         var channel  = BuildChannel(Msg(MessageType.MirrorStart, startMsg.ToBytes()));
 
         var stateHistory = new List<MirrorState>();
@@ -96,35 +96,38 @@ public class MirrorSessionTests
         session.StateChanged += (_, s) => stateHistory.Add(s);
 
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-        await session.StartAsync(cts.Token).ConfigureAwait(false);
+        await session.StartAsync(cts.Token);
 
         Assert.Contains(MirrorState.Active, stateHistory);
     }
 
     [Fact]
-    public async Task StartAsync_ReceivesMirrorStart_InitializesDecoder()
+    public async Task StartAsync_ReceivesMirrorStartThenFrame_DecoderReceivesFrame()
     {
         var stub     = new StubDecoder();
-        var startMsg = new MirrorStartMessage("sid-init", 1080, 1920, 30, "H264");
-        var channel  = BuildChannel(Msg(MessageType.MirrorStart, startMsg.ToBytes()));
+        var startMsg = new MirrorStartMessage(MirrorSessionMode.PhoneWindow, MirrorCodec.H264, 1920, 1080, 30, "sid-init");
+        var frameMsg = new MirrorFrameMessage(true, 1000L, new byte[] { 0, 0, 0, 1, 0x65 });
+        var channel  = BuildChannel(
+            Msg(MessageType.MirrorStart, startMsg.ToBytes()),
+            Msg(MessageType.MirrorFrame, frameMsg.ToBytes()));
         var session  = BuildSession("sid-init", channel, stub);
 
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-        await session.StartAsync(cts.Token).ConfigureAwait(false);
+        await session.StartAsync(cts.Token);
 
-        Assert.True(stub.Initialized);
+        Assert.Equal(1, stub.SubmitCount);
     }
 
     [Fact]
     public async Task StartAsync_SessionIdMatchesConstructorArg()
     {
         const string SessionId = "my-session";
-        var startMsg = new MirrorStartMessage(SessionId, 720, 1280, 30, "H264");
+        var startMsg = new MirrorStartMessage(MirrorSessionMode.PhoneWindow, MirrorCodec.H264, 1280, 720, 30, SessionId);
         var channel  = BuildChannel(Msg(MessageType.MirrorStart, startMsg.ToBytes()));
         var session  = BuildSession(SessionId, channel);
 
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-        await session.StartAsync(cts.Token).ConfigureAwait(false);
+        await session.StartAsync(cts.Token);
 
         Assert.Equal(SessionId, session.SessionId);
     }
@@ -135,8 +138,8 @@ public class MirrorSessionTests
     public async Task StartAsync_ReceivesFrame_ForwardsToDecoder()
     {
         var stub     = new StubDecoder();
-        var startMsg = new MirrorStartMessage("sid-frame", 1080, 1920, 30, "H264");
-        var frameMsg = new MirrorFrameMessage("sid-frame", 1000L, true, new byte[] { 0, 0, 0, 1, 0x65 });
+        var startMsg = new MirrorStartMessage(MirrorSessionMode.PhoneWindow, MirrorCodec.H264, 1920, 1080, 30, "sid-frame");
+        var frameMsg = new MirrorFrameMessage(true, 1000L, new byte[] { 0, 0, 0, 1, 0x65 });
 
         var channel = BuildChannel(
             Msg(MessageType.MirrorStart, startMsg.ToBytes()),
@@ -145,24 +148,23 @@ public class MirrorSessionTests
         var session = BuildSession("sid-frame", channel, stub);
 
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-        await session.StartAsync(cts.Token).ConfigureAwait(false);
+        await session.StartAsync(cts.Token);
 
         Assert.Equal(1, stub.SubmitCount);
     }
 
     [Fact]
-    public async Task StartAsync_ReceivesFrameBeforeMirrorStart_DropsFrame()
+    public async Task StartAsync_ReceivesFrameWithoutStart_ForwardsToDecoder()
     {
         var stub     = new StubDecoder();
-        var frameMsg = new MirrorFrameMessage("sid-early", 0L, true, new byte[] { 1, 2, 3 });
+        var frameMsg = new MirrorFrameMessage(true, 0L, new byte[] { 1, 2, 3 });
         var channel  = BuildChannel(Msg(MessageType.MirrorFrame, frameMsg.ToBytes()));
         var session  = BuildSession("sid-early", channel, stub);
 
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-        // Should not throw — frame is silently dropped
-        await session.StartAsync(cts.Token).ConfigureAwait(false);
+        await session.StartAsync(cts.Token);
 
-        Assert.Equal(0, stub.SubmitCount);
+        Assert.Equal(1, stub.SubmitCount);
     }
 
     // ── MirrorStop handling ────────────────────────────────────────────────
@@ -170,8 +172,8 @@ public class MirrorSessionTests
     [Fact]
     public async Task StartAsync_ReceivesMirrorStop_TransitionsToStopped()
     {
-        var startMsg = new MirrorStartMessage("sid-stop", 1080, 1920, 30, "H264");
-        var stopMsg  = new MirrorStopMessage("sid-stop");
+        var startMsg = new MirrorStartMessage(MirrorSessionMode.PhoneWindow, MirrorCodec.H264, 1920, 1080, 30, "sid-stop");
+        var stopMsg  = new MirrorStopMessage();
 
         var channel = BuildChannel(
             Msg(MessageType.MirrorStart, startMsg.ToBytes()),
@@ -182,7 +184,7 @@ public class MirrorSessionTests
         session.StateChanged += (_, s) => stateHistory.Add(s);
 
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-        await session.StartAsync(cts.Token).ConfigureAwait(false);
+        await session.StartAsync(cts.Token);
 
         Assert.Contains(MirrorState.Stopped, stateHistory);
     }
@@ -201,17 +203,17 @@ public class MirrorSessionTests
                .Returns(async callInfo =>
                {
                    var ct = (CancellationToken)callInfo[0];
-                   await Task.Delay(Timeout.Infinite, ct).ConfigureAwait(false);
+                   await Task.Delay(Timeout.Infinite, ct);
                    return (ProtocolMessage?)null;
                });
 
         var session   = BuildSession("sid-cancel", channel);
         var startTask = session.StartAsync();
 
-        await Task.Delay(20).ConfigureAwait(false);
-        await session.StopAsync().ConfigureAwait(false);
+        await Task.Delay(20);
+        await session.StopAsync();
 
-        var completed = await Task.WhenAny(startTask, Task.Delay(3000)).ConfigureAwait(false);
+        var completed = await Task.WhenAny(startTask, Task.Delay(3000));
         Assert.Same(startTask, completed);
         Assert.Equal(MirrorState.Stopped, session.State);
     }
@@ -225,7 +227,7 @@ public class MirrorSessionTests
         var session = BuildSession("sid-close", channel);
 
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-        await session.StartAsync(cts.Token).ConfigureAwait(false);
+        await session.StartAsync(cts.Token);
 
         Assert.Equal(MirrorState.Stopped, session.State);
     }
@@ -255,12 +257,12 @@ public class MirrorSessionTests
     public async Task Dispose_DisposesDecoder()
     {
         var stub     = new StubDecoder();
-        var startMsg = new MirrorStartMessage("sid-disp", 640, 480, 30, "H264");
+        var startMsg = new MirrorStartMessage(MirrorSessionMode.PhoneWindow, MirrorCodec.H264, 640, 480, 30, "sid-disp");
         var channel  = BuildChannel(Msg(MessageType.MirrorStart, startMsg.ToBytes()));
         var session  = BuildSession("sid-disp", channel, stub);
 
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-        await session.StartAsync(cts.Token).ConfigureAwait(false);
+        await session.StartAsync(cts.Token);
 
         // After StartAsync completes (channel closed) cleanup should have disposed the decoder
         Assert.True(stub.Disposed);
@@ -276,7 +278,7 @@ public class MirrorSessionTests
         var evt     = new InputEventArgs(InputEventType.Touch, 0.5f, 0.5f);
 
         var ex = await Record.ExceptionAsync(
-            () => session.SendInputAsync(evt)).ConfigureAwait(false);
+            () => session.SendInputAsync(evt));
         Assert.Null(ex);
     }
 }

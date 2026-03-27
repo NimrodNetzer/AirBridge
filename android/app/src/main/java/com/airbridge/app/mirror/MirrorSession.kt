@@ -82,7 +82,14 @@ class MirrorSession(
 
         // Announce the mirror session to the Windows host
         if (captureSession != null && width > 0 && height > 0) {
-            val startMsg = MirrorStartMessage(sessionId, width, height, fps, codec)
+            val startMsg = MirrorStartMessage(
+                mode      = MirrorSessionMode.PHONE_WINDOW,
+                codec     = if (codec == "H265") MirrorCodec.H265 else MirrorCodec.H264,
+                width     = width,
+                height    = height,
+                fps       = fps.toByte(),
+                sessionId = sessionId
+            )
             channel.send(
                 ProtocolMessage(
                     type    = MessageType.MIRROR_START,

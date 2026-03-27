@@ -145,13 +145,11 @@ class ScreenCaptureSession(
                 outputBuffer.get(nalData)
 
                 val isKey = (bufferInfo.flags and MediaCodec.BUFFER_FLAG_KEY_FRAME) != 0
-                val tsMs  = bufferInfo.presentationTimeUs / 1_000L
 
                 val frame = MirrorFrameMessage(
-                    sessionId   = sessionId,
-                    timestampMs = tsMs,
-                    isKeyFrame  = isKey,
-                    nalData     = nalData
+                    isKeyFrame              = isKey,
+                    presentationTimestampUs = bufferInfo.presentationTimeUs,
+                    nalData                 = nalData
                 )
                 _frames.tryEmit(frame)
             } finally {

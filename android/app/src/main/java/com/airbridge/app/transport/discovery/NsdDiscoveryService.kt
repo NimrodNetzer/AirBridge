@@ -42,6 +42,7 @@ class NsdDiscoveryService @Inject constructor(
         private const val ATTR_DEVICE_ID   = "deviceId"
         private const val ATTR_DEVICE_NAME = "deviceName"
         private const val ATTR_DEVICE_TYPE = "deviceType"
+        private const val ATTR_IP_ADDRESS  = "ip"
     }
 
     private val nsdManager: NsdManager =
@@ -59,6 +60,8 @@ class NsdDiscoveryService @Inject constructor(
 
     private var registrationListener: NsdManager.RegistrationListener? = null
     private var discoveryListener: NsdManager.DiscoveryListener? = null
+    /** Actual registered name (NsdManager may append " (2)" etc. to avoid collisions). */
+    private var ownServiceName: String? = null
 
     // -------------------------------------------------------------------------
     // IDiscoveryService
@@ -97,6 +100,7 @@ class NsdDiscoveryService @Inject constructor(
         suspendCancellableCoroutine { cont ->
             val listener = object : NsdManager.RegistrationListener {
                 override fun onServiceRegistered(info: NsdServiceInfo) {
+                    ownServiceName = info.serviceName
                     if (cont.isActive) cont.resume(Unit)
                 }
 
@@ -132,7 +136,10 @@ class NsdDiscoveryService @Inject constructor(
             override fun onDiscoveryStopped(serviceType: String) {}
 
             override fun onServiceFound(serviceInfo: NsdServiceInfo) {
-                if (serviceInfo.serviceType != SERVICE_TYPE) return
+                // NsdManager on some Android versions appends ".local." to the type;
+                // use contains() to match regardless of the trailing domain suffix.
+                if (!serviceInfo.serviceType.contains("_airbridge._tcp", ignoreCase = true)) return
+                if (serviceInfo.serviceName == ownServiceName) return  // skip self
                 enqueueResolve(serviceInfo)
             }
 
@@ -205,9 +212,11 @@ class NsdDiscoveryService @Inject constructor(
      */
     private fun buildDeviceInfo(info: NsdServiceInfo): DeviceInfo? {
         val host: InetAddress = info.host ?: return null
-        val ipAddress = host.hostAddress ?: return null
-
-        val attrs = info.attributes  // Map<String, ByteArray> on API 21+
+        val attrs = info.attributes
+        // Prefer IP embedded in TXT record — avoids stale mDNS hostname-resolution cache
+        val txtIp = attrs[ATTR_IP_ADDRESS]?.toString(Charsets.UTF_8)?.takeIf { it.isNotBlank() }
+        android.util.Log.d("AirBridge/NSD", "host=${host.hostAddress} txtIp=$txtIp attrs=${attrs.keys}")
+        val ipAddress = txtIp ?: host.hostAddress ?: return null
 
         val deviceId = attrs[ATTR_DEVICE_ID]?.toString(Charsets.UTF_8)
             ?: info.serviceName

@@ -1,3 +1,5 @@
+using AirBridge.Core.Interfaces;
+
 namespace AirBridge.Mirror;
 
 /// <summary>
@@ -7,6 +9,11 @@ namespace AirBridge.Mirror;
 /// </summary>
 public interface IMirrorWindowHost
 {
+    /// <summary>
+    /// Raised whenever the user interacts with the mirror window via pointer or keyboard.
+    /// Subscribe from <see cref="MirrorSession"/> to forward events to the Android device.
+    /// </summary>
+    event EventHandler<InputEventArgs>? InputEventRaised;
     /// <summary>
     /// Shows the window and begins presenting decoded frames.
     /// Must be called on the UI thread.

@@ -8,6 +8,7 @@ import com.airbridge.app.transport.protocol.MessageType
 import com.airbridge.app.transport.protocol.ProtocolMessage
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withTimeout
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
@@ -58,14 +59,9 @@ class PairingService @Inject constructor(
             channel.send(ProtocolMessage(MessageType.PAIRING_REQUEST, payload))
 
             withTimeout(60_000L) {
-                var response: ProtocolMessage? = null
-                channel.incomingMessages.collect { msg ->
-                    if (msg.type == MessageType.PAIRING_RESPONSE) {
-                        response = msg
-                        return@collect
-                    }
-                }
-                val (accepted, remoteKey) = parseResponsePayload(response?.payload ?: return@withTimeout PairingResult.ERROR)
+                val response = channel.incomingMessages
+                    .first { it.type == MessageType.PAIRING_RESPONSE }
+                val (accepted, remoteKey) = parseResponsePayload(response.payload)
                 if (!accepted) return@withTimeout PairingResult.REJECTED_BY_USER
                 keyStore.storeRemoteKey(remoteDevice.deviceId, remoteKey)
                 PairingResult.SUCCESS

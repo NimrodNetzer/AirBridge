@@ -18,13 +18,13 @@ public sealed partial class DevicesViewModel : ObservableObject
     public ObservableCollection<DeviceInfo> Devices => _connection.DiscoveredDevices;
 
     [ObservableProperty]
-    private bool _isScanning;
+    private bool _isScanning = true;
 
     [ObservableProperty]
     private DeviceInfo? _selectedDevice;
 
     [ObservableProperty]
-    private string _statusMessage = "Not scanning";
+    private string _statusMessage = "Scanning for devices\u2026";
 
     /// <summary>Raised when the user requests a connection to a device.</summary>
     public event EventHandler<DeviceInfo>? ConnectRequested;

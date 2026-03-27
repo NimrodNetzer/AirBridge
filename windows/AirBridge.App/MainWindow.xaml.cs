@@ -1,4 +1,5 @@
 using AirBridge.App.Pages;
+using AirBridge.App.Services;
 using Microsoft.UI.Composition.SystemBackdrops;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
@@ -29,6 +30,53 @@ public sealed partial class MainWindow : Window
         // Navigate to Devices page on startup
         ContentFrame.Navigate(typeof(DevicesPage));
         NavView.SelectedItem = NavView.MenuItems[0];
+
+        // Auto-start discovery so the TCP listener is always ready when Android connects.
+        _ = AutoStartDiscoveryAsync();
+
+        // Subscribe here (MainWindow always has a valid XamlRoot) so the pairing dialog
+        // pops up regardless of which page is currently visible.
+        var connectionSvc = App.Services.GetService(typeof(DeviceConnectionService)) as DeviceConnectionService;
+        if (connectionSvc is not null)
+            connectionSvc.IncomingPairingRequest += OnIncomingPairingRequest;
+    }
+
+    private bool _pairingDialogOpen;
+
+    private void OnIncomingPairingRequest(object? sender, (string Pin, string DeviceId) info)
+    {
+        DispatcherQueue.TryEnqueue(async () =>
+        {
+            if (_pairingDialogOpen) return;
+            _pairingDialogOpen = true;
+            try
+            {
+                var dialog = new AirBridge.App.Pages.PairingDialog(null)
+                {
+                    XamlRoot = Content.XamlRoot
+                };
+                await dialog.ShowAsync();
+            }
+            catch { /* ignore UI errors */ }
+            finally
+            {
+                _pairingDialogOpen = false;
+            }
+        });
+    }
+
+    private async Task AutoStartDiscoveryAsync()
+    {
+        try
+        {
+            var svc = App.Services.GetService(typeof(DeviceConnectionService)) as DeviceConnectionService;
+            if (svc is not null)
+                await svc.StartDiscoveryAsync().ConfigureAwait(false);
+        }
+        catch
+        {
+            // Non-fatal: user can still start manually via the Devices page
+        }
     }
 
     // ── Navigation ────────────────────────────────────────────────────────────

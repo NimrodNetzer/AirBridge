@@ -16,7 +16,7 @@ public sealed class FileTransferServiceImpl : IFileTransferService
     private readonly ConcurrentDictionary<string, ITransferSession> _sessions = new();
 
     /// <inheritdoc/>
-    public async Task<ITransferSession> SendFileAsync(
+    public Task<ITransferSession> SendFileAsync(
         string filePath,
         DeviceInfo destination,
         CancellationToken cancellationToken = default)
@@ -25,14 +25,14 @@ public sealed class FileTransferServiceImpl : IFileTransferService
         ArgumentNullException.ThrowIfNull(destination);
 
         if (!File.Exists(filePath))
-            throw new FileNotFoundException("File not found.", filePath);
+            return Task.FromException<ITransferSession>(new FileNotFoundException("File not found.", filePath));
 
         // The transport channel must be opened by the caller before this service
         // can write to it.  For the UI path, TransferViewModel.SendFileAsync opens
         // the channel and calls the channel-based overload below.
-        throw new InvalidOperationException(
+        return Task.FromException<ITransferSession>(new InvalidOperationException(
             "Use SendFileWithStreamAsync from the UI layer. " +
-            "Call DeviceConnectionService.ConnectToDeviceAsync first.");
+            "Call DeviceConnectionService.ConnectToDeviceAsync first."));
     }
 
     /// <summary>
@@ -68,7 +68,7 @@ public sealed class FileTransferServiceImpl : IFileTransferService
     }
 
     /// <inheritdoc/>
-    public async Task<ITransferSession> ReceiveFileAsync(
+    public Task<ITransferSession> ReceiveFileAsync(
         string sessionId,
         string destinationDirectory,
         CancellationToken cancellationToken = default)
@@ -78,8 +78,8 @@ public sealed class FileTransferServiceImpl : IFileTransferService
 
         // Receiving requires the sender to have already sent a FileStart message
         // over the channel.  This is handled by the transport/pairing layer.
-        throw new InvalidOperationException(
-            "Use ReceiveFileWithStreamAsync from the transport/pairing layer.");
+        return Task.FromException<ITransferSession>(new InvalidOperationException(
+            "Use ReceiveFileWithStreamAsync from the transport/pairing layer."));
     }
 
     /// <inheritdoc/>

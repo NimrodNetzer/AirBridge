@@ -181,24 +181,27 @@ public sealed class MirrorSession : IMirrorSession
             new ProtocolMessage(MessageType.MirrorStart, Array.Empty<byte>()), ct)
             .ConfigureAwait(false);
 
-        // Create decoder and window (may be null in headless/test mode)
-        if (_decoderFactory is not null && _windowFactory is not null)
+        // Create decoder (headless-safe: decoder can exist without a window)
+        if (_decoderFactory is not null)
         {
             _decoder = _decoderFactory();
-            _window  = _windowFactory(_decoder);
 
-            // Wire input relay: window raises events → enqueue for send loop
-            if (_window is MirrorWindow mw)
-                mw.InputEventRaised += (_, evt) => _inputQueue.Writer.TryWrite(evt);
-
-            // Wire drag-and-drop callback
-            _window.OnFilesDropped = async files =>
+            if (_windowFactory is not null)
             {
-                foreach (var file in files)
-                    await SendFileAsync(file, _cts?.Token ?? default).ConfigureAwait(false);
-            };
+                _window = _windowFactory(_decoder);
 
-            _window.Show();
+                // Wire input relay: window raises events → enqueue for send loop
+                _window.InputEventRaised += (_, evt) => _inputQueue.Writer.TryWrite(evt);
+
+                // Wire drag-and-drop callback
+                _window.OnFilesDropped = async files =>
+                {
+                    foreach (var file in files)
+                        await SendFileAsync(file, _cts?.Token ?? default).ConfigureAwait(false);
+                };
+
+                _window.Show();
+            }
         }
 
         State = MirrorState.Active;

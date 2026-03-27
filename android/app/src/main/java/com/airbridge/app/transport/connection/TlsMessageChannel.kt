@@ -26,10 +26,10 @@ import javax.net.ssl.SSLSocket
  * Each frame on the wire is:
  * ```
  * ┌───────────────────────┬────────────┬───────────────────────┐
- * │  length  (4 bytes BE) │ type byte  │  payload (length - 1) │
+ * │  length  (4 bytes BE) │ type byte  │  payload (length)     │
  * └───────────────────────┴────────────┴───────────────────────┘
  * ```
- * `length` = 1 (type byte) + payload size.
+ * `length` = payload size only (type byte is NOT included).
  *
  * The maximum payload is [ProtocolMessage.MAX_PAYLOAD_BYTES].
  *
@@ -64,18 +64,16 @@ class TlsMessageChannel(
     override val incomingMessages: Flow<ProtocolMessage> = flow {
         try {
             while (_connected.get()) {
-                // Read 4-byte length prefix (big-endian)
-                val frameLength = try {
+                // Read 4-byte payload-size prefix (big-endian, does NOT include type byte)
+                val payloadSize = try {
                     input.readInt()
                 } catch (e: EOFException) {
                     break  // clean close
                 }
 
-                if (frameLength < 1) {
-                    throw IllegalStateException("Invalid frame length: $frameLength")
+                if (payloadSize < 0) {
+                    throw IllegalStateException("Invalid payload size: $payloadSize")
                 }
-
-                val payloadSize = frameLength - 1  // subtract the type byte
                 if (payloadSize > ProtocolMessage.MAX_PAYLOAD_BYTES) {
                     throw IllegalStateException(
                         "Payload too large: $payloadSize > ${ProtocolMessage.MAX_PAYLOAD_BYTES}"
@@ -120,9 +118,8 @@ class TlsMessageChannel(
         }
 
         sendMutex.withLock {
-            // frameLength = 1 (type byte) + payload size
-            val frameLength = 1 + payload.size
-            out.writeInt(frameLength)
+            // 4-byte header = payload size only (type byte is NOT included)
+            out.writeInt(payload.size)
             out.writeByte(message.type.value.toInt())
             if (payload.isNotEmpty()) out.write(payload)
             out.flush()

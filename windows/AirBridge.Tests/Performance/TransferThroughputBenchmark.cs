@@ -48,7 +48,7 @@ public class TransferThroughputBenchmark
         await Task.WhenAll(
             sender.StartAsync(),
             receiver.StartAsync()
-        ).ConfigureAwait(false);
+        );
 
         sw.Stop();
         return sw.Elapsed;
@@ -67,10 +67,10 @@ public class TransferThroughputBenchmark
         Random.Shared.NextBytes(fileData);
 
         // Act — warm up (first run allocates JIT, buffers, etc.)
-        await RunLoopbackTransferAsync(new byte[OneMB]).ConfigureAwait(false);
+        await RunLoopbackTransferAsync(new byte[OneMB]);
 
         // Timed run
-        var elapsed = await RunLoopbackTransferAsync(fileData).ConfigureAwait(false);
+        var elapsed = await RunLoopbackTransferAsync(fileData);
 
         // Assert
         double seconds  = elapsed.TotalSeconds;
@@ -94,7 +94,7 @@ public class TransferThroughputBenchmark
         var fileData = new byte[OneMB];
         Random.Shared.NextBytes(fileData);
 
-        var elapsed = await RunLoopbackTransferAsync(fileData).ConfigureAwait(false);
+        var elapsed = await RunLoopbackTransferAsync(fileData);
 
         Console.WriteLine($"[TransferThroughput] 1 MB in {elapsed.TotalMilliseconds:F0} ms");
         Assert.True(elapsed.TotalSeconds < 1.0,
@@ -113,9 +113,9 @@ public class TransferThroughputBenchmark
         Random.Shared.NextBytes(fileData);
 
         // Warm up
-        await RunLoopbackTransferAsync(new byte[256 * 1024]).ConfigureAwait(false);
+        await RunLoopbackTransferAsync(new byte[256 * 1024]);
 
-        var elapsed = await RunLoopbackTransferAsync(fileData).ConfigureAwait(false);
+        var elapsed = await RunLoopbackTransferAsync(fileData);
 
         double mbps = (size10MB / (double)OneMB) / elapsed.TotalSeconds;
         Console.WriteLine($"[TransferThroughput] 10 MB (SHA-256) in {elapsed.TotalMilliseconds:F0} ms → {mbps:F1} MB/s");
@@ -136,7 +136,7 @@ public class TransferThroughputBenchmark
         var fileData = new byte[size];
         Random.Shared.NextBytes(fileData);
 
-        var elapsed = await RunLoopbackTransferAsync(fileData).ConfigureAwait(false);
+        var elapsed = await RunLoopbackTransferAsync(fileData);
 
         // With 8 chunks, per-chunk overhead should not dominate
         int expectedChunks = size / TransferSession.ChunkSize + (size % TransferSession.ChunkSize > 0 ? 1 : 0);

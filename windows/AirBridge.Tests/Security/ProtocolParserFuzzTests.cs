@@ -386,7 +386,7 @@ public class ProtocolParserFuzzTests
     [Fact]
     public async Task Parse_100RandomByteSequences_NeverPropagateUnhandledException()
     {
-        var rng = new Random(seed: 42); // deterministic seed for reproducibility
+        var rng = new Random(42); // deterministic seed for reproducibility
         for (int i = 0; i < 100; i++)
         {
             int length = rng.Next(0, 101); // 0..100 bytes
@@ -410,7 +410,7 @@ public class ProtocolParserFuzzTests
     [Fact]
     public async Task Parse_100RandomFramesWithValidHeader_NeverCrash()
     {
-        var rng = new Random(seed: 1337);
+        var rng = new Random(1337);
         for (int i = 0; i < 100; i++)
         {
             // Build a header with a small random payload length (≤ 255) to keep tests fast

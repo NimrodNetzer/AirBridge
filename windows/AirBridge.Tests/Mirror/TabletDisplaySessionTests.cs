@@ -135,7 +135,7 @@ public class TabletDisplaySessionTests
         try
         {
             using var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(200));
-            await session.StartAsync(cts.Token).ConfigureAwait(false);
+            await session.StartAsync(cts.Token);
         }
         catch (Exception)
         {
@@ -165,7 +165,7 @@ public class TabletDisplaySessionTests
         try
         {
             using var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(200));
-            await session.StartAsync(cts.Token).ConfigureAwait(false);
+            await session.StartAsync(cts.Token);
         }
         catch (Exception) { }
 
@@ -183,12 +183,12 @@ public class TabletDisplaySessionTests
         var session = new TabletDisplaySession("sid-stop", ch);
 
         // Stop without starting — should gracefully handle this
-        await session.StopAsync().ConfigureAwait(false);
+        await session.StopAsync();
 
         // StopAsync should send MirrorStop message
         await ch.Received().SendAsync(
             Arg.Is<ProtocolMessage>(m => m.Type == MessageType.MirrorStop),
-            Arg.Any<CancellationToken>()).ConfigureAwait(false);
+            Arg.Any<CancellationToken>());
 
         Assert.Equal(MirrorState.Stopped, session.State);
     }
@@ -206,7 +206,7 @@ public class TabletDisplaySessionTests
           .Returns(Task.CompletedTask);
 
         var session = new TabletDisplaySession("sid-stop-msg", ch);
-        await session.StopAsync().ConfigureAwait(false);
+        await session.StopAsync();
 
         var stopMsg = sent.FirstOrDefault(m => m.Type == MessageType.MirrorStop);
         Assert.NotNull(stopMsg);
@@ -221,8 +221,8 @@ public class TabletDisplaySessionTests
         var ch      = MakeChannel();
         var session = new TabletDisplaySession("sid-idem", ch);
 
-        await session.StopAsync().ConfigureAwait(false);
-        await session.StopAsync().ConfigureAwait(false); // should not throw
+        await session.StopAsync();
+        await session.StopAsync(); // should not throw
 
         Assert.Equal(MirrorState.Stopped, session.State);
     }

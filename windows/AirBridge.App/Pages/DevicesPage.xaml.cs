@@ -26,15 +26,9 @@ public sealed partial class DevicesPage : Page
     private async void ConnectButton_Click(object sender, RoutedEventArgs e)
     {
         if (sender is Button { Tag: DeviceInfo device })
-            await ShowPairingDialogAsync(device);
-    }
-
-    private async Task ShowPairingDialogAsync(DeviceInfo device)
-    {
-        var dialog = new PairingDialog(device)
         {
-            XamlRoot = XamlRoot
-        };
-        await dialog.ShowAsync();
+            var dialog = new PairingDialog(device) { XamlRoot = XamlRoot };
+            await dialog.ShowAsync();
+        }
     }
 }

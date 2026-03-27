@@ -34,8 +34,7 @@
                         </StackPanel>
                         <ToggleSwitch Grid.Column="1"
                                       IsOn="{x:Bind ViewModel.AutoStart, Mode=TwoWay}"
-                                      VerticalAlignment="Center"
-                                      Command="{x:Bind ViewModel.ToggleAutoStartCommand}"/>
+                                      VerticalAlignment="Center"/>
                     </Grid>
                 </Border>
             </StackPanel>

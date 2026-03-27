@@ -1,4 +1,6 @@
 using System.Collections.Concurrent;
+using System.Net.NetworkInformation;
+using System.Net.Sockets;
 using AirBridge.Core.Models;
 using AirBridge.Transport.Interfaces;
 using AirBridge.Transport.Protocol;
@@ -30,6 +32,7 @@ public sealed class MdnsDiscoveryService : IDiscoveryService
     private const string TxtDeviceName   = "deviceName";
     private const string TxtDeviceType   = "deviceType";
     private const string TxtProtoVersion = "protocolVersion";
+    private const string TxtIpAddress    = "ip";
 
     // ── Configuration ──────────────────────────────────────────────────────
     private readonly string _localDeviceId;
@@ -94,15 +97,23 @@ public sealed class MdnsDiscoveryService : IDiscoveryService
             _sd.ServiceInstanceShutdown   += OnServiceInstanceShutdown;
 
             // ── Build our advertisement profile ───────────────────────────
+            var localIp = GetLocalWifiIpAddress();
+            var addresses = !string.IsNullOrEmpty(localIp) &&
+                            System.Net.IPAddress.TryParse(localIp, out var parsedIp)
+                ? new[] { parsedIp }
+                : null;
+
             _profile = new ServiceProfile(
                 instanceName: _localDeviceName,
                 serviceName:  ServiceType,
-                port:         (ushort)ProtocolMessage.DefaultPort);
+                port:         (ushort)ProtocolMessage.DefaultPort,
+                addresses:    addresses);
 
             _profile.AddProperty(TxtDeviceId,     _localDeviceId);
             _profile.AddProperty(TxtDeviceName,   _localDeviceName);
             _profile.AddProperty(TxtDeviceType,   _localDeviceType.ToString());
             _profile.AddProperty(TxtProtoVersion, ProtocolMessage.ProtocolVersion.ToString());
+            _profile.AddProperty(TxtIpAddress,    localIp);
 
             _mdns.Start();
             _sd.Advertise(_profile);
@@ -221,6 +232,32 @@ public sealed class MdnsDiscoveryService : IDiscoveryService
                 result[s] = string.Empty;
         }
         return result;
+    }
+
+    private static string GetLocalWifiIpAddress()
+    {
+        var candidates = NetworkInterface.GetAllNetworkInterfaces()
+            .Where(ni =>
+                ni.OperationalStatus == OperationalStatus.Up &&
+                ni.NetworkInterfaceType != NetworkInterfaceType.Loopback &&
+                ni.NetworkInterfaceType != NetworkInterfaceType.Tunnel)
+            .SelectMany(ni => ni.GetIPProperties().UnicastAddresses)
+            .Where(a =>
+                a.Address.AddressFamily == AddressFamily.InterNetwork &&
+                !System.Net.IPAddress.IsLoopback(a.Address))
+            .Select(a => a.Address)
+            .ToList();
+
+        return candidates
+            .OrderBy(ip =>
+            {
+                var b = ip.GetAddressBytes();
+                if (b[0] == 192 && b[1] == 168) return 0;
+                if (b[0] == 10)                  return 1;
+                if (b[0] == 172 && b[1] >= 16 && b[1] <= 31) return 2;
+                return 3;
+            })
+            .FirstOrDefault()?.ToString() ?? string.Empty;
     }
 
     private void TearDown()

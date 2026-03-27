@@ -42,7 +42,7 @@ public class TransferQueueTests
         var senderTask   = queue.EnqueueAsync(sender);
         var receiverTask = queue.EnqueueAsync(receiver);
 
-        await Task.WhenAll(senderTask, receiverTask).ConfigureAwait(false);
+        await Task.WhenAll(senderTask, receiverTask);
 
         Assert.Equal(TransferState.Completed, sender.State);
         Assert.Equal(TransferState.Completed, receiver.State);
@@ -73,7 +73,7 @@ public class TransferQueueTests
             queue.EnqueueAsync(p.receiver)
         }).ToArray();
 
-        await Task.WhenAll(tasks).ConfigureAwait(false);
+        await Task.WhenAll(tasks);
 
         Assert.Equal(3, completionOrder.Count);
         foreach (var (sender, _) in sessions)
@@ -104,7 +104,7 @@ public class TransferQueueTests
         var senderTasks   = sessions.Select(p => queue.EnqueueAsync(p.sender)).ToArray();
         var receiverTasks = sessions.Select(p => queue.EnqueueAsync(p.receiver)).ToArray();
 
-        await Task.WhenAll(senderTasks.Concat(receiverTasks)).ConfigureAwait(false);
+        await Task.WhenAll(senderTasks.Concat(receiverTasks));
 
         // All 3 senders should have completed
         foreach (var (sender, _) in sessions)
@@ -129,9 +129,9 @@ public class TransferQueueTests
             .ToArray();
 
         // Give sessions a moment to start
-        await Task.Delay(20).ConfigureAwait(false);
-        await queue.CancelAllAsync().ConfigureAwait(false);
-        await Task.WhenAll(allTasks).ConfigureAwait(false);
+        await Task.Delay(20);
+        await queue.CancelAllAsync();
+        await Task.WhenAll(allTasks);
 
         foreach (var (sender, receiver) in sessions)
         {
@@ -156,7 +156,7 @@ public class TransferQueueTests
         await Task.WhenAll(
             queue.EnqueueAsync(s1), queue.EnqueueAsync(r1),
             queue.EnqueueAsync(s2), queue.EnqueueAsync(r2)
-        ).ConfigureAwait(false);
+        );
 
         var all = queue.AllSessions;
         Assert.Contains(s1, all);

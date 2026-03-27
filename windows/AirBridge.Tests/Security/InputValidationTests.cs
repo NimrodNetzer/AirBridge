@@ -183,7 +183,7 @@ public class InputValidationTests
     public void ProtocolMessage_ZeroLengthPayload_LengthIsZero()
     {
         var msg = new ProtocolMessage(MessageType.Handshake, Array.Empty<byte>());
-        Assert.Equal(0, msg.Payload.Length);
+        Assert.Empty(msg.Payload);
     }
 
     // ── Wire format constants ─────────────────────────────────────────────────
@@ -221,7 +221,7 @@ public class InputValidationTests
     public void ProtocolMessage_MaxSizedPayload_IsAcceptedBySendGuard()
     {
         // Exactly at the limit — should NOT be rejected
-        bool wouldBeRejected = ProtocolMessage.MaxPayloadBytes > ProtocolMessage.MaxPayloadBytes;
+        bool wouldBeRejected = !SizeGuardPasses((uint)ProtocolMessage.MaxPayloadBytes);
         Assert.False(wouldBeRejected);
     }
 }
