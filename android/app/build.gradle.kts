@@ -19,8 +19,18 @@ android {
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
+    signingConfigs {
+        create("release") {
+            storeFile = file(System.getenv("AIRBRIDGE_KEYSTORE_PATH") ?: "airbridge-release.jks")
+            storePassword = System.getenv("AIRBRIDGE_STORE_PASSWORD") ?: ""
+            keyAlias = System.getenv("AIRBRIDGE_KEY_ALIAS") ?: "airbridge"
+            keyPassword = System.getenv("AIRBRIDGE_KEY_PASSWORD") ?: ""
+        }
+    }
+
     buildTypes {
         release {
+            signingConfig = signingConfigs.getByName("release")
             isMinifyEnabled = true
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
