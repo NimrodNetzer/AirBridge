@@ -3,6 +3,7 @@ namespace AirBridge.Core.Models;
 /// <summary>Device type classification.</summary>
 public enum DeviceType
 {
+    Unknown,
     WindowsPc,
     AndroidPhone,
     AndroidTablet

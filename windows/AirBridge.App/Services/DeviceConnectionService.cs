@@ -151,12 +151,74 @@ public sealed class DeviceConnectionService : IDisposable
     /// <summary>
     /// Connects to an already-paired <paramref name="device"/> without running the pairing
     /// handshake. Stores the resulting channel as the active session and begins monitoring for
-    /// disconnection.
+    /// disconnection. The TCP connect attempt is bounded by a 15-second timeout.
+    /// On disconnect, retries with exponential back-off (base 2 s, max 30 s, up to 5 attempts).
     /// </summary>
     public async Task ConnectToPairedDeviceAsync(DeviceInfo device, CancellationToken ct)
     {
-        var channel = await _connectionManager.ConnectAsync(device, ct).ConfigureAwait(false);
-        RegisterSession(device.DeviceId, channel);
+        const int    ConnectTimeoutMs = 15_000;
+        const int    MaxAttempts      = 5;
+        const double BackoffBase      = 2.0;
+        const int    BackoffMaxMs     = 30_000;
+
+        for (int attempt = 1; attempt <= MaxAttempts; attempt++)
+        {
+            ct.ThrowIfCancellationRequested();
+
+            using var connectCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            connectCts.CancelAfter(ConnectTimeoutMs);
+
+            IMessageChannel channel;
+            try
+            {
+                channel = await _connectionManager.ConnectAsync(device, connectCts.Token)
+                                                  .ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+            {
+                // Connect timed out — treat as transient failure and retry.
+                if (attempt == MaxAttempts) throw new TimeoutException(
+                    $"Failed to connect to {device.DeviceId} after {MaxAttempts} attempts (connect timeout).");
+                goto Backoff;
+            }
+            catch (Exception) when (attempt < MaxAttempts)
+            {
+                goto Backoff;
+            }
+
+            // Connected — register session and watch for disconnect.
+            RegisterSession(device.DeviceId, channel);
+
+            // Wait until this session closes before attempting a reconnect.
+            var disconnectTcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            void OnDisconnect(object? s, string id)
+            {
+                if (id == device.DeviceId) disconnectTcs.TrySetResult(true);
+            }
+            DeviceDisconnected += OnDisconnect;
+            try
+            {
+                await disconnectTcs.Task.WaitAsync(ct).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+            {
+                return; // Caller cancelled — do not reconnect.
+            }
+            finally
+            {
+                DeviceDisconnected -= OnDisconnect;
+            }
+
+            // Session dropped — retry from attempt 1 (reset loop).
+            attempt = 0; // loop increment will make it 1
+            continue;
+
+            Backoff:
+            var delayMs = (int)Math.Min(
+                Math.Pow(BackoffBase, attempt - 1) * 1000,
+                BackoffMaxMs);
+            await Task.Delay(delayMs, ct).ConfigureAwait(false);
+        }
     }
 
     // ── Session lifecycle helpers ───────────────────────────────────────────
@@ -315,7 +377,7 @@ public sealed class DeviceConnectionService : IDisposable
             var device = new AirBridge.Core.Models.DeviceInfo(
                 DeviceId:   remoteId,
                 DeviceName: remoteId,
-                DeviceType: AirBridge.Core.Models.DeviceType.AndroidPhone,
+                DeviceType: AirBridge.Core.Models.DeviceType.Unknown,
                 IpAddress:  string.Empty,
                 Port:       0,
                 IsPaired:   true);
