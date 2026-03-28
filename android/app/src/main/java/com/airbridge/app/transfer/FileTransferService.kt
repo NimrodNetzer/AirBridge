@@ -16,6 +16,8 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import java.io.ByteArrayInputStream
+import java.io.ByteArrayOutputStream
 import java.io.File
 import java.util.UUID
 import java.util.concurrent.CopyOnWriteArrayList
@@ -156,7 +158,7 @@ class FileTransferService @Inject constructor(
      * Should be called once a session is established (e.g. from
      * [DeviceConnectionService.connectToPairedDevice] or after pairing completes).
      */
-    fun registerReceiveHandler(deviceId: String) {
+    override fun registerReceiveHandler(deviceId: String) {
         // State machine for the current in-progress receive.
         var currentSessionId: String? = null
         var currentFileName: String? = null
