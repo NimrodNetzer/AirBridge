@@ -43,6 +43,7 @@ public sealed partial class TransferViewModel : ObservableObject
 {
     private readonly FileTransferServiceImpl _transfer;
     private readonly DeviceConnectionService _connection;
+    private readonly Microsoft.UI.Dispatching.DispatcherQueue _dispatcher;
 
     public ObservableCollection<TransferItem> Transfers { get; } = new();
 
@@ -55,6 +56,7 @@ public sealed partial class TransferViewModel : ObservableObject
     {
         _transfer   = (FileTransferServiceImpl)transfer;
         _connection = connection;
+        _dispatcher = Microsoft.UI.Dispatching.DispatcherQueue.GetForCurrentThread();
 
         _connection.DeviceConnected    += OnDeviceConnected;
         _connection.DeviceDisconnected += OnDeviceDisconnected;
@@ -114,12 +116,12 @@ public sealed partial class TransferViewModel : ObservableObject
 
             var session = await _transfer.SendFileAsync(filePath, fakeDevice).ConfigureAwait(false);
 
-            session.ProgressChanged += (_, bytes) =>
+            session.ProgressChanged += (_, bytes) => _dispatcher?.TryEnqueue(() =>
             {
                 item.Progress = info.Length > 0 ? bytes / (double)info.Length : 1.0;
                 item.Status   = $"{bytes / 1024} KB / {info.Length / 1024} KB";
-            };
-            session.StateChanged += (_, state) =>
+            });
+            session.StateChanged += (_, state) => _dispatcher?.TryEnqueue(() =>
             {
                 item.Status = state switch
                 {
@@ -130,7 +132,7 @@ public sealed partial class TransferViewModel : ObservableObject
                 };
                 if (state == AirBridge.Core.Interfaces.TransferState.Completed)
                     item.Progress = 1.0;
-            };
+            });
         }
         catch (Exception ex)
         {

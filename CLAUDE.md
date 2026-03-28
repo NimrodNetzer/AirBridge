@@ -228,6 +228,7 @@ Each major feature module is implemented by a dedicated agent on its own branch.
 | **5 — Mirror MVP** ✅ | Phone screen as floating window (view only) | merged to `dev` |
 | **6 — Mirror Full** ✅ | Input relay, drag-and-drop, IddCx tablet display | merged to `dev` |
 | **7 — Polish** | Unified UI, installer, performance, security audit | `dev` → `main` |
+| **8 — iPad Support** | iPad as second monitor + file transfer (Swift client, VideoToolbox decoder, NWBrowser discovery) | post-`main` |
 
 ---
 
@@ -305,3 +306,4 @@ When a feature is not yet wired to a UI, provide a minimal test harness (console
 | 2026-03 | Security: TOFU pairing + TLS 1.3 | Privacy-first, no server dependency, matches user mental model (like Bluetooth pairing) |
 | 2026-03 | Discovery: mDNS over custom broadcast | Standards-based, works without router config, supported natively on both platforms |
 | 2026-03 | Video: H.264 hardware encode/decode | Hardware support on virtually all Android devices (API 18+) and Windows (DXVA); low latency |
+| 2026-03 | Future: iPad client as next major milestone | iPad is the dominant tablet globally. Existing solutions (Duet, Luna, Spacedesk) are laggy, require accounts/dongles, or are Mac-only. A zero-config Windows→iPad second monitor is an unsolved market gap and the highest-leverage expansion after Iteration 7. Windows IddCx + H.264 stream is already built — only an iPadOS Swift client is needed. App Store precedent exists (Duet, Spacedesk are approved). |

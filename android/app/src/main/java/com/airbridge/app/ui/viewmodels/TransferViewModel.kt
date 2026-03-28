@@ -53,6 +53,9 @@ class TransferViewModel @Inject constructor(
     private val _activeSessions = MutableStateFlow<List<TransferSessionUiState>>(emptyList())
     val activeSessions: StateFlow<List<TransferSessionUiState>> = _activeSessions.asStateFlow()
 
+    private val _errorMessage = MutableStateFlow<String?>(null)
+    val errorMessage: StateFlow<String?> = _errorMessage.asStateFlow()
+
     /**
      * The device ID of the currently connected device, or null when no session is open.
      * Derived from [DeviceConnectionService.connectedDeviceIds] and updated reactively.
@@ -96,7 +99,13 @@ class TransferViewModel @Inject constructor(
         val filePath = resolveFilePath(uri) ?: return
 
         viewModelScope.launch {
-            val session = transferService.sendFile(filePath, device)
+            val session = try {
+                transferService.sendFile(filePath, device)
+            } catch (e: Exception) {
+                android.util.Log.e("AirBridge/Transfer", "sendFile failed: ${e.message}", e)
+                _errorMessage.value = "Send failed: ${e.message}"
+                return@launch
+            }
             // Observe progress and state
             val uiState = TransferSessionUiState(
                 sessionId = session.sessionId,

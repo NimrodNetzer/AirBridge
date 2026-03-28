@@ -1,5 +1,7 @@
 package com.airbridge.app.core
 
+import android.content.Context
+import android.os.PowerManager
 import com.airbridge.app.core.interfaces.IPairingService
 import com.airbridge.app.core.interfaces.PairingResult
 import com.airbridge.app.core.models.DeviceInfo
@@ -7,7 +9,9 @@ import com.airbridge.app.core.models.DeviceType
 import com.airbridge.app.transport.interfaces.IConnectionManager
 import com.airbridge.app.transport.interfaces.IMessageChannel
 import com.airbridge.app.transport.protocol.MessageType
+import com.airbridge.app.transport.protocol.ProtocolMessage
 import android.util.Log
+import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -17,7 +21,6 @@ import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CopyOnWriteArrayList
@@ -29,7 +32,6 @@ import javax.inject.Singleton
  *
  * @param device    Synthetic [DeviceInfo] built from the connection's remote address.
  * @param channel   The live [IMessageChannel] on which the PAIRING_REQUEST was received.
- * @param result    Outcome after the handshake completes (populated after [confirmPairing] is called).
  */
 data class InboundPairingRequest(
     val device: DeviceInfo,
@@ -40,18 +42,19 @@ data class InboundPairingRequest(
  * Routes inbound connections from [IConnectionManager.incomingConnections] and tracks the
  * currently active [IMessageChannel] for each connected device.
  *
- * When a new inbound channel arrives the service peeks at the first message:
- * - **PAIRING_REQUEST** → hands the channel to [IPairingService.acceptPairingOnChannel] and
- *   emits an [InboundPairingRequest] on [incomingPairingRequests] so the UI can display the PIN.
- *   On success the channel is registered as the active session.
- * - All other message types → the device is already paired; register the channel directly as
- *   an active session and emit on [establishedChannels] for feature services.
+ * Inbound channel routing is done in a **single flow collection** to avoid the
+ * double-collection race that would occur if the first message were peeked with
+ * [kotlinx.coroutines.flow.first] and then the flow were collected again in a separate
+ * coroutine.  Both the routing decision (pairing vs. reconnect) and all subsequent
+ * message dispatching happen inside one [collect] call per channel.
  *
- * The service is a singleton and must be started by calling [start] once the app is ready to
- * accept connections (typically from [MainActivity] or a Hilt entry-point).
+ * A [PowerManager.PARTIAL_WAKE_LOCK] is held for the lifetime of each active session so
+ * that Android does not throttle [Dispatchers.IO] coroutines while the device is idle,
+ * which would prevent timely PONG responses to Windows keepalive PINGs.
  */
 @Singleton
 class DeviceConnectionService @Inject constructor(
+    @ApplicationContext private val context: Context,
     private val connectionManager: IConnectionManager,
     private val pairingService: IPairingService,
 ) {
@@ -63,9 +66,7 @@ class DeviceConnectionService @Inject constructor(
 
     private val _sessions = ConcurrentHashMap<String, IMessageChannel>()
 
-    /**
-     * Returns the active [IMessageChannel] for [deviceId], or null if none is open.
-     */
+    /** Returns the active [IMessageChannel] for [deviceId], or null if none is open. */
     fun getActiveSession(deviceId: String): IMessageChannel? = _sessions[deviceId]
 
     /**
@@ -75,20 +76,29 @@ class DeviceConnectionService @Inject constructor(
     private val _connectedDeviceIds = MutableStateFlow<Set<String>>(emptySet())
     val connectedDeviceIds: StateFlow<Set<String>> = _connectedDeviceIds.asStateFlow()
 
-    // ── Existing flows ────────────────────────────────────────────────────
+    // ── WakeLock ──────────────────────────────────────────────────────────
+
+    private val wakeLock: PowerManager.WakeLock by lazy {
+        val pm = context.getSystemService(Context.POWER_SERVICE) as PowerManager
+        pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "AirBridge:Connection")
+    }
+
+    // ── Public flows ──────────────────────────────────────────────────────
 
     /** Emits whenever a remote device initiates a pairing handshake with this device. */
     private val _incomingPairingRequests = MutableSharedFlow<InboundPairingRequest>()
     val incomingPairingRequests: SharedFlow<InboundPairingRequest> =
         _incomingPairingRequests.asSharedFlow()
 
-    /** Emits channels for already-paired connections (non-pairing messages). */
+    /** Emits channels for already-paired connections (non-pairing first messages). */
     private val _establishedChannels = MutableSharedFlow<IMessageChannel>()
     val establishedChannels: SharedFlow<IMessageChannel> = _establishedChannels.asSharedFlow()
 
     /** Tracks the result of the most-recent inbound pairing attempt for the UI. */
     private val _lastInboundPairingResult = MutableStateFlow<PairingResult?>(null)
     val lastInboundPairingResult: StateFlow<PairingResult?> = _lastInboundPairingResult.asStateFlow()
+
+    // ── Lifecycle ─────────────────────────────────────────────────────────
 
     /**
      * Starts listening for inbound TLS connections and routing them.
@@ -115,106 +125,155 @@ class DeviceConnectionService @Inject constructor(
 
     // ── Message dispatcher ────────────────────────────────────────────────
 
-    private val _messageHandlers = ConcurrentHashMap<String, CopyOnWriteArrayList<suspend (com.airbridge.app.transport.protocol.ProtocolMessage) -> Unit>>()
+    private val _messageHandlers =
+        ConcurrentHashMap<String, CopyOnWriteArrayList<suspend (ProtocolMessage) -> Unit>>()
 
     /**
-     * Registers a handler that will be invoked for every incoming message on the session
-     * for [deviceId]. Multiple handlers may be registered for the same device; each message
-     * is delivered to all of them in registration order.
-     *
-     * The handler is removed automatically when the session for [deviceId] closes.
-     *
-     * @param deviceId The device whose incoming messages this handler should receive.
-     * @param handler  Suspend lambda invoked with each [ProtocolMessage].
+     * Registers a handler invoked for every incoming message on [deviceId]'s session.
+     * Multiple handlers may be registered; each message is delivered to all in order.
+     * Handlers are removed automatically when the session closes.
      */
-    fun addMessageHandler(deviceId: String, handler: suspend (com.airbridge.app.transport.protocol.ProtocolMessage) -> Unit) {
+    fun addMessageHandler(deviceId: String, handler: suspend (ProtocolMessage) -> Unit) {
         _messageHandlers.getOrPut(deviceId) { CopyOnWriteArrayList() }.add(handler)
     }
 
-    /**
-     * Removes all message handlers for [deviceId].
-     */
+    /** Removes all message handlers for [deviceId]. */
     fun removeMessageHandlers(deviceId: String) {
         _messageHandlers.remove(deviceId)
     }
 
     /**
-     * Registers [channel] as the active session for [deviceId] and starts a dispatcher
-     * coroutine that fans out every incoming message to all registered handlers.
-     * Replaces any previous session for the same device.
+     * Registers [channel] as the active session for [deviceId] and starts a coroutine that
+     * collects [IMessageChannel.incomingMessages] and fans each message out to registered handlers.
      *
-     * Call this after outbound pairing succeeds to keep the pairing channel alive.
+     * Use this for **outbound** connections (i.e. from [connectToPairedDevice]).  Inbound
+     * connections are handled by [routeChannel], which reuses the same collection loop.
      */
     fun registerSession(deviceId: String, channel: IMessageChannel) {
-        _sessions[deviceId] = channel
-        _connectedDeviceIds.value = _connectedDeviceIds.value + deviceId
-        Log.i(TAG, "Session registered: $deviceId")
-
-        // Dispatch incoming messages to registered handlers; detect disconnect in finally.
+        startSession(deviceId, channel)
         scope.launch {
-            try {
-                channel.incomingMessages.collect { message ->
-                    Log.d(TAG, "[$deviceId] RX type=${message.type} len=${message.payload.size}")
-                    val handlers = _messageHandlers[deviceId] ?: return@collect
-                    for (handler in handlers) {
-                        try {
-                            handler(message)
-                        } catch (e: Exception) {
-                            Log.e(TAG, "[$deviceId] Handler error for type=${message.type}: ${e.message}", e)
-                        }
-                    }
-                }
-            } catch (e: Exception) {
-                Log.e(TAG, "[$deviceId] Transport error: ${e.javaClass.simpleName}: ${e.message}", e)
-            } finally {
-                _sessions.remove(deviceId, channel)
-                _messageHandlers.remove(deviceId)
-                _connectedDeviceIds.value = _connectedDeviceIds.value - deviceId
-                Log.i(TAG, "Session closed: $deviceId")
-            }
+            runMessageLoop(deviceId, channel, firstMessage = null)
         }
     }
 
-    // ── Private routing logic ─────────────────────────────────────────────
+    // ── Private routing + session management ─────────────────────────────
 
+    /**
+     * Records the session in the registry and acquires the connection WakeLock.
+     * Must be matched by [endSession] in a finally block.
+     */
+    private fun startSession(deviceId: String, channel: IMessageChannel) {
+        _sessions[deviceId] = channel
+        _connectedDeviceIds.value = _connectedDeviceIds.value + deviceId
+        if (!wakeLock.isHeld) wakeLock.acquire()
+        Log.i(TAG, "Session registered: $deviceId")
+    }
+
+    /** Removes the session from the registry and releases the WakeLock if no sessions remain. */
+    private fun endSession(deviceId: String, channel: IMessageChannel) {
+        _sessions.remove(deviceId, channel)
+        _messageHandlers.remove(deviceId)
+        _connectedDeviceIds.value = _connectedDeviceIds.value - deviceId
+        if (_sessions.isEmpty() && wakeLock.isHeld) wakeLock.release()
+        Log.i(TAG, "Session closed: $deviceId")
+    }
+
+    /**
+     * Routes an inbound [channel] in a **single** flow collection.
+     *
+     * The first message determines the path:
+     * - [MessageType.PAIRING_REQUEST] → drive the pairing handshake; on success continue
+     *   dispatching subsequent messages as a normal session.
+     * - Anything else → already-paired reconnect; dispatch this and all subsequent messages.
+     *
+     * Using a single collection eliminates the double-collection race where a prior
+     * [kotlinx.coroutines.flow.first] call could cancel the upstream producer and leave bytes
+     * stranded in the [kotlinx.coroutines.flow.flowOn] internal channel buffer.
+     */
     private suspend fun routeChannel(channel: IMessageChannel) {
+        var sessionStarted = false
+        var firstSeen = false
         try {
-            val firstMessage = channel.incomingMessages.first()
-            when (firstMessage.type) {
-                MessageType.PAIRING_REQUEST -> {
-                    // Build a synthetic DeviceInfo from the channel's remote device ID
-                    // (which is the remote IP address as set by TlsConnectionManager).
-                    val device = DeviceInfo(
-                        deviceId = channel.remoteDeviceId,
-                        deviceName = channel.remoteDeviceId,
-                        deviceType = DeviceType.WINDOWS_PC,
-                        ipAddress = channel.remoteDeviceId,
-                        port = 0,
-                        isPaired = false,
-                    )
+            channel.incomingMessages.collect { message ->
+                if (!firstSeen) {
+                    // ── First message: routing decision ───────────────────
+                    firstSeen = true
+                    when (message.type) {
+                        MessageType.PAIRING_REQUEST -> {
+                            val device = DeviceInfo(
+                                deviceId   = channel.remoteDeviceId,
+                                deviceName = channel.remoteDeviceId,
+                                deviceType = DeviceType.WINDOWS_PC,
+                                ipAddress  = channel.remoteDeviceId,
+                                port       = 0,
+                                isPaired   = false,
+                            )
+                            _incomingPairingRequests.emit(InboundPairingRequest(device, channel))
 
-                    // Emit so the UI can subscribe and show the incoming request / PIN.
-                    _incomingPairingRequests.emit(InboundPairingRequest(device, channel))
+                            val result = pairingService.acceptPairingOnChannel(device, channel, message)
+                            _lastInboundPairingResult.value = result
 
-                    // Drive the handshake, passing the already-read first message so
-                    // acceptPairingOnChannel doesn't attempt a second read of the same socket.
-                    val result = pairingService.acceptPairingOnChannel(device, channel, firstMessage)
-                    _lastInboundPairingResult.value = result
+                            if (result == PairingResult.SUCCESS || result == PairingResult.ALREADY_PAIRED) {
+                                startSession(channel.remoteDeviceId, channel)
+                                sessionStarted = true
+                            } else {
+                                channel.close()
+                            }
+                        }
 
-                    // On success, keep the channel alive as the active session.
-                    if (result == PairingResult.SUCCESS || result == PairingResult.ALREADY_PAIRED) {
-                        registerSession(channel.remoteDeviceId, channel)
+                        else -> {
+                            // Already-paired device reconnecting.
+                            startSession(channel.remoteDeviceId, channel)
+                            sessionStarted = true
+                            _establishedChannels.emit(channel)
+                            dispatchMessage(channel.remoteDeviceId, message)
+                        }
                     }
-                }
-
-                else -> {
-                    // Already-paired device reconnecting — register as active session.
-                    registerSession(channel.remoteDeviceId, channel)
-                    _establishedChannels.emit(channel)
+                } else {
+                    // ── Subsequent messages: normal dispatch ──────────────
+                    dispatchMessage(channel.remoteDeviceId, message)
                 }
             }
         } catch (e: Exception) {
-            Log.e(TAG, "routeChannel error for ${channel.remoteDeviceId}: ${e.message}", e)
+            Log.e(TAG, "routeChannel error for ${channel.remoteDeviceId}: ${e.javaClass.simpleName}: ${e.message}", e)
+        } finally {
+            if (sessionStarted) endSession(channel.remoteDeviceId, channel)
+        }
+    }
+
+    /**
+     * Collects [IMessageChannel.incomingMessages] and dispatches each message to all registered
+     * handlers for [deviceId].  Used by [registerSession] for outbound connections.
+     *
+     * @param firstMessage An already-read message to dispatch before starting the collect loop
+     *                     (used when the caller has consumed a message outside this loop).
+     */
+    private suspend fun runMessageLoop(
+        deviceId: String,
+        channel: IMessageChannel,
+        firstMessage: ProtocolMessage?,
+    ) {
+        try {
+            if (firstMessage != null) dispatchMessage(deviceId, firstMessage)
+            channel.incomingMessages.collect { message ->
+                dispatchMessage(deviceId, message)
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "[$deviceId] Transport error: ${e.javaClass.simpleName}: ${e.message}", e)
+        } finally {
+            endSession(deviceId, channel)
+        }
+    }
+
+    private suspend fun dispatchMessage(deviceId: String, message: ProtocolMessage) {
+        Log.d(TAG, "[$deviceId] RX type=${message.type} len=${message.payload.size}")
+        val handlers = _messageHandlers[deviceId] ?: return
+        for (handler in handlers) {
+            try {
+                handler(message)
+            } catch (e: Exception) {
+                Log.e(TAG, "[$deviceId] Handler error for type=${message.type}: ${e.message}", e)
+            }
         }
     }
 }

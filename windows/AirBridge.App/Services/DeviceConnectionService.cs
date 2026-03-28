@@ -172,12 +172,21 @@ public sealed class DeviceConnectionService : IDisposable
     /// </summary>
     public void RegisterSession(string deviceId, IMessageChannel channel)
     {
-        // Replace any stale session for this device.
+        // Close any existing session for this device before replacing it.
+        // This prevents two MonitorSessionAsync loops from racing on the same device ID,
+        // which would cause one to steal PONG frames intended for the other's keepalive check.
+        if (_activeSessions.TryRemove(deviceId, out var oldChannel) &&
+            !ReferenceEquals(oldChannel, channel))
+        {
+            AppLog.Info($"RegisterSession: closing stale session for {deviceId}");
+            _ = oldChannel.DisposeAsync().AsTask();
+        }
+
         _activeSessions[deviceId] = channel;
         AppLog.Info($"Session registered: {deviceId}");
 
-        // Wire the file transfer receive handler so incoming files are processed
-        // regardless of which page the user is on.
+        // Clear stale handlers and re-register fresh ones for this channel.
+        _messageHandlers.TryRemove(deviceId, out _);
         _fileTransfer.SetChannel(channel);
         AddMessageHandler(deviceId, _fileTransfer.CreateReceiveHandler());
 
@@ -239,7 +248,17 @@ public sealed class DeviceConnectionService : IDisposable
     {
         try
         {
-            // Give the remote side up to 30 s to send the opening PAIRING_REQUEST.
+            // RemoteDeviceId is set from the HANDSHAKE exchange that occurs before this
+            // event fires.  If this device is already paired, register the session
+            // immediately — Android does not send a first application message on reconnect.
+            if (_pairing.IsPaired(channel.RemoteDeviceId))
+            {
+                AppLog.Info($"Reconnect from known device {channel.RemoteDeviceId} — registering immediately");
+                RegisterSession(channel.RemoteDeviceId, channel);
+                return;
+            }
+
+            // Unknown device — wait up to 30 s for a PAIRING_REQUEST.
             using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
             ProtocolMessage? msg;
             try
@@ -259,10 +278,11 @@ public sealed class DeviceConnectionService : IDisposable
                 return;
             }
 
-            // Already-paired device reconnecting — register immediately as active session.
+            // Unexpected non-pairing message from an unknown device — drop.
             if (msg.Type != MessageType.PairingRequest)
             {
-                RegisterSession(channel.RemoteDeviceId, channel);
+                AppLog.Warn($"Non-pairing first message (type={msg.Type}) from unknown device {channel.RemoteDeviceId} — dropping");
+                await channel.DisposeAsync().ConfigureAwait(false);
                 return;
             }
 
@@ -366,13 +386,19 @@ public sealed class DeviceConnectionService : IDisposable
 
     private void OnDeviceFound(object? sender, DeviceInfo device)
     {
-        _registry.AddOrUpdate(device);
+        // Preserve persisted pairing state — mDNS discovery always has IsPaired=false.
+        var entry = _pairing.IsPaired(device.DeviceId) ? device with { IsPaired = true } : device;
+        _registry.AddOrUpdate(entry);
         DispatchToUiThread(() => DiscoveredDevices.Add(device));
     }
 
     private void OnDeviceLost(object? sender, string deviceId)
     {
-        _registry.Remove(deviceId);
+        // Do not remove paired devices — pairing must survive mDNS advertisement expiry
+        // so the device is still recognised as paired on reconnect.
+        if (!_registry.IsPaired(deviceId))
+            _registry.Remove(deviceId);
+
         DispatchToUiThread(() =>
         {
             var d = DiscoveredDevices.FirstOrDefault(x => x.DeviceId == deviceId);

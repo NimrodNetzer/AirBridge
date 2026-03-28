@@ -216,6 +216,7 @@ public sealed class TlsMessageChannel : IMessageChannel
                 if (!_connected) break;
 
                 var pingTime = DateTime.UtcNow;
+                AirBridge.Core.AppLog.Info($"[{RemoteDeviceId}] PING sent");
                 try
                 {
                     await SendAsync(
@@ -239,10 +240,13 @@ public sealed class TlsMessageChannel : IMessageChannel
                 if (_lastPongUtc < pingTime)
                 {
                     // No PONG received within timeout — treat as dead connection
+                    AirBridge.Core.AppLog.Warn($"[{RemoteDeviceId}] PONG timeout — closing channel");
                     SignalDisconnect();
                     await DisposeAsync().ConfigureAwait(false);
                     break;
                 }
+
+                AirBridge.Core.AppLog.Info($"[{RemoteDeviceId}] PONG received OK");
             }
         }
         catch (OperationCanceledException) { /* normal shutdown */ }

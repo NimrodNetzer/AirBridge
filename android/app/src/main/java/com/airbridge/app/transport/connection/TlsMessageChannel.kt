@@ -9,6 +9,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOn
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
@@ -87,6 +88,7 @@ class TlsMessageChannel(
      * PING and PONG messages are handled internally and never emitted to collectors.
      */
     override val incomingMessages: Flow<ProtocolMessage> = flow {
+        var cancelledByCollector = false
         try {
             while (_connected.get()) {
                 // Read 4-byte payload-size prefix (big-endian, does NOT include type byte)
@@ -132,12 +134,21 @@ class TlsMessageChannel(
                     }
                 }
             }
+        } catch (e: CancellationException) {
+            // Normal flow cancellation (e.g. first{} operator used by pairing service).
+            // Do NOT mark the channel as disconnected — the socket is still alive.
+            cancelledByCollector = true
+            throw e
         } catch (e: Exception) {
             Log.e(TAG, "[$remoteDeviceId] Read loop error: ${e.javaClass.simpleName}: ${e.message}", e)
+            _connected.set(false)
             throw e
         } finally {
+            // For clean EOF exits and real errors, mark disconnected.
+            // For collector cancellation (first{} etc.), leave connected so the next
+            // collect() call can start a new read loop on the same socket.
+            if (!cancelledByCollector) _connected.set(false)
             Log.i(TAG, "[$remoteDeviceId] incomingMessages flow ended, connected=${_connected.get()}")
-            _connected.set(false)
         }
     }.flowOn(Dispatchers.IO)
 

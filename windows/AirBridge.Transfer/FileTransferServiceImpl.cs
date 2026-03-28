@@ -1,3 +1,4 @@
+using AirBridge.Core;
 using AirBridge.Core.Interfaces;
 using AirBridge.Core.Models;
 using AirBridge.Transfer.Interfaces;
@@ -35,11 +36,23 @@ public sealed class FileTransferServiceImpl : IFileTransferService, IDisposable
     private FileStream?              _rxStream;
     private IncrementalHash?         _rxHash;
 
-    private static string ReceiveDir
+    /// <summary>
+    /// Optional override for the directory where received files are saved.
+    /// When null, defaults to <c>~/Downloads/AirBridge</c>.
+    /// </summary>
+    private readonly string? _receiveDirOverride;
+
+    /// <summary>Creates a service that saves received files to <c>~/Downloads/AirBridge</c>.</summary>
+    public FileTransferServiceImpl() { }
+
+    /// <summary>Creates a service that saves received files to <paramref name="receiveDir"/>.</summary>
+    public FileTransferServiceImpl(string receiveDir) => _receiveDirOverride = receiveDir;
+
+    private string ReceiveDir
     {
         get
         {
-            var dir = Path.Combine(
+            var dir = _receiveDirOverride ?? Path.Combine(
                 Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
                 "Downloads", "AirBridge");
             Directory.CreateDirectory(dir);
@@ -84,6 +97,7 @@ public sealed class FileTransferServiceImpl : IFileTransferService, IDisposable
                 session.UpdateState(TransferState.Active);
 
                 // 1. FILE_TRANSFER_START
+                AppLog.Info($"sendFile START: {info.Name} ({info.Length} bytes) → {destination.DeviceId}");
                 var startBytes = new FileStartMessage(sessionId, info.Name, info.Length).ToBytes();
                 await channel.SendAsync(
                     new ProtocolMessage(MessageType.FileTransferStart, startBytes),
@@ -92,6 +106,7 @@ public sealed class FileTransferServiceImpl : IFileTransferService, IDisposable
                 // 2. FILE_CHUNK stream with SHA-256
                 using var sha = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
                 long offset = 0;
+                int chunkIndex = 0;
                 var buf = new byte[ChunkSize];
                 await using var src = info.OpenRead();
                 int read;
@@ -100,23 +115,29 @@ public sealed class FileTransferServiceImpl : IFileTransferService, IDisposable
                     var chunk = buf[..read];
                     sha.AppendData(chunk);
                     var chunkBytes = new FileChunkMessage(offset, chunk).ToBytes();
+                    AppLog.Info($"sendFile CHUNK #{chunkIndex}: offset={offset} size={read}");
                     await channel.SendAsync(
                         new ProtocolMessage(MessageType.FileChunk, chunkBytes),
                         cancellationToken).ConfigureAwait(false);
+                    AppLog.Info($"sendFile CHUNK #{chunkIndex} sent OK");
                     offset += read;
+                    chunkIndex++;
                     session.UpdateProgress(offset);
                 }
 
                 // 3. FILE_TRANSFER_END
+                AppLog.Info($"sendFile END: {info.Name} — {chunkIndex} chunks, {offset} bytes");
                 var endBytes = new FileEndMessage(offset, sha.GetCurrentHash()).ToBytes();
                 await channel.SendAsync(
                     new ProtocolMessage(MessageType.FileTransferEnd, endBytes),
                     cancellationToken).ConfigureAwait(false);
 
                 session.UpdateState(TransferState.Completed);
+                AppLog.Info($"sendFile COMPLETE: {info.Name}");
             }
             catch (Exception ex)
             {
+                AppLog.Error($"sendFile FAILED: {info.Name} — {ex.GetType().Name}: {ex.Message}", ex);
                 session.UpdateState(TransferState.Failed);
                 try
                 {
