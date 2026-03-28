@@ -29,6 +29,7 @@ publish/
 *.appx
 *.appxbundle
 *.appinstaller
+windows/output/
 
 # ===========================
 # Android / Gradle
