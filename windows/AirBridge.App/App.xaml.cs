@@ -68,11 +68,7 @@ public partial class App : Application
         services.AddSingleton<IMirrorService>(_ =>
             new MirrorServiceImpl(
                 decoderFactory: () => new MirrorDecoder(),
-#if WINUI3
                 windowFactory:  decoder => new MirrorWindow(decoder)
-#else
-                windowFactory:  null
-#endif
             ));
 
         // ── App-level orchestration ───────────────────────────────────────────

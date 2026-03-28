@@ -13,7 +13,6 @@ namespace AirBridge.App.Pages;
 public sealed partial class PairingDialog : ContentDialog
 {
     private readonly DeviceConnectionService _connectionSvc;
-    private bool _accepted;
 
     /// <summary>Creates a new pairing dialog. Device may be null when Android initiates.</summary>
     public PairingDialog(DeviceInfo? device)

@@ -48,6 +48,9 @@ public sealed class MirrorDecoder : IMirrorDecoder
     /// </summary>
     public event EventHandler<SoftwareBitmap>? FrameDecoded;
 
+    /// <inheritdoc/>
+    public event EventHandler? FrameReady;
+
     // ── State ──────────────────────────────────────────────────────────────
 
     private MediaStreamSource?        _streamSource;
@@ -60,6 +63,7 @@ public sealed class MirrorDecoder : IMirrorDecoder
     private bool _seenKeyFrame;
     private bool _initialized;
     private bool _disposed;
+    private long _nextTimestampMs;
 
     private int _width;
     private int _height;
@@ -94,6 +98,28 @@ public sealed class MirrorDecoder : IMirrorDecoder
 
         _streamSource.SampleRequested += OnSampleRequested;
         _initialized = true;
+        return Task.CompletedTask;
+    }
+
+    // ── IMirrorDecoder ─────────────────────────────────────────────────────
+
+    /// <inheritdoc/>
+    /// <remarks>
+    /// Detects IDR keyframes by inspecting the NAL unit type byte (bits 0–4 == 5).
+    /// Timestamps are synthesised at ~30 fps intervals; sub-ms accuracy is sufficient
+    /// for local Wi-Fi mirroring where the display refresh rate dominates.
+    /// </remarks>
+    public Task PushFrameAsync(byte[] frameData, CancellationToken cancellationToken = default)
+    {
+        if (frameData is null || frameData.Length == 0)
+            return Task.CompletedTask;
+
+        // NAL unit type lives in bits [4:0] of the first byte (H.264 Annex B,
+        // after any start-code prefix the caller has already stripped).
+        bool isKeyFrame = (frameData[0] & 0x1F) == 5; // IDR slice
+
+        long ts = System.Threading.Interlocked.Add(ref _nextTimestampMs, 33); // ~30 fps
+        SubmitNalUnit(frameData, ts, isKeyFrame);
         return Task.CompletedTask;
     }
 
@@ -177,6 +203,7 @@ public sealed class MirrorDecoder : IMirrorDecoder
                 // MirrorWindow renders the MediaPlayer surface directly for zero-copy.
                 var bitmap = new SoftwareBitmap(BitmapPixelFormat.Bgra8, _width, _height);
                 FrameDecoded?.Invoke(this, bitmap);
+                FrameReady?.Invoke(this, EventArgs.Empty);
             }
             catch (OperationCanceledException)
             {

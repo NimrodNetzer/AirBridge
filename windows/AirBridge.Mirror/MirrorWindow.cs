@@ -38,7 +38,7 @@ public sealed class MirrorWindow : IMirrorWindowHost
 
     private readonly Window    _window;
     private readonly Grid      _rootGrid;
-    private readonly TextBlock _dropOverlay;
+    private readonly Border _dropOverlay;
 
     // Cached client dimensions for normalising pointer coordinates.
     private int _windowWidth  = 1;
@@ -73,17 +73,20 @@ public sealed class MirrorWindow : IMirrorWindowHost
         _window.ExtendsContentIntoTitleBar = true;
 
         // ── Drop overlay ───────────────────────────────────────────────────
-        _dropOverlay = new TextBlock
+        _dropOverlay = new Border
         {
-            Text                = "Drop to send file",
-            HorizontalAlignment = HorizontalAlignment.Center,
-            VerticalAlignment   = VerticalAlignment.Center,
-            FontSize            = 24,
-            Foreground          = new SolidColorBrush(Microsoft.UI.Colors.White),
             Background          = new SolidColorBrush(
                                       Microsoft.UI.ColorHelper.FromArgb(0xCC, 0x00, 0x00, 0x00)),
+            HorizontalAlignment = HorizontalAlignment.Center,
+            VerticalAlignment   = VerticalAlignment.Center,
             Visibility          = Visibility.Collapsed,
             IsHitTestVisible    = false,
+            Child               = new TextBlock
+            {
+                Text       = "Drop to send file",
+                FontSize   = 24,
+                Foreground = new SolidColorBrush(Microsoft.UI.Colors.White),
+            },
         };
 
         // ── Root grid ──────────────────────────────────────────────────────

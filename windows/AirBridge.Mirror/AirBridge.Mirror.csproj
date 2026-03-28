@@ -16,7 +16,8 @@
   <!-- MirrorWindow.cs and MirrorDecoder.cs depend on WinUI 3 / Windows App SDK
        WinRT APIs (SoftwareBitmap, MediaStreamSource, etc.) which are only
        available in the net8.0-windows App project.  Exclude them here so the
-       plain net8.0 library compiles without those dependencies. -->
+       plain net8.0 library compiles without those dependencies.
+       They are linked into AirBridge.App via <Compile Include="..." Link="..."/> -->
   <ItemGroup>
     <Compile Remove="MirrorWindow.cs" />
     <Compile Remove="MirrorDecoder.cs" />
