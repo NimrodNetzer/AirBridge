@@ -170,6 +170,7 @@ public sealed class DeviceConnectionService : IDisposable
     {
         // Replace any stale session for this device.
         _activeSessions[deviceId] = channel;
+        AppLog.Info($"Session registered: {deviceId}");
         DeviceConnected?.Invoke(this, deviceId);
 
         // Monitor for disconnect on a background task.
@@ -183,7 +184,13 @@ public sealed class DeviceConnectionService : IDisposable
             while (true)
             {
                 var msg = await channel.ReceiveAsync().ConfigureAwait(false);
-                if (msg is null) break; // clean close
+                if (msg is null)
+                {
+                    AppLog.Info($"Channel closed cleanly: {deviceId}");
+                    break;
+                }
+
+                AppLog.Info($"RX [{deviceId}] type={msg.Type} len={msg.Payload?.Length ?? 0}");
 
                 // Dispatch to all registered handlers for this device.
                 if (_messageHandlers.TryGetValue(deviceId, out var handlers))
@@ -193,19 +200,24 @@ public sealed class DeviceConnectionService : IDisposable
                     foreach (var handler in snapshot)
                     {
                         try { await handler(msg).ConfigureAwait(false); }
-                        catch { /* misbehaving handler must not kill dispatch loop */ }
+                        catch (Exception hEx)
+                        {
+                            AppLog.Error($"Message handler threw for device {deviceId}, type {msg.Type}", hEx);
+                        }
                     }
                 }
             }
         }
-        catch
+        catch (Exception ex)
         {
             // Transport error — treat as disconnect.
+            AppLog.Error($"Transport error on session {deviceId}", ex);
         }
         finally
         {
             _activeSessions.TryRemove(new KeyValuePair<string, IMessageChannel>(deviceId, channel));
             _messageHandlers.TryRemove(deviceId, out _);
+            AppLog.Info($"Session closed: {deviceId}");
             DeviceDisconnected?.Invoke(this, deviceId);
         }
     }

@@ -9,6 +9,7 @@ import com.airbridge.app.core.models.DeviceInfo
 import com.airbridge.app.transfer.interfaces.IFileTransferService
 import com.airbridge.app.transport.protocol.MessageType
 import com.airbridge.app.transport.protocol.ProtocolMessage
+import android.util.Log
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -43,6 +44,7 @@ class FileTransferService @Inject constructor(
 ) : IFileTransferService {
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val TAG = "AirBridge/Transfer"
 
     private val _activeSessions = CopyOnWriteArrayList<ITransferSession>()
 
@@ -84,6 +86,7 @@ class FileTransferService @Inject constructor(
 
         scope.launch {
             try {
+                Log.i(TAG, "sendFile START: ${file.name} (${file.length()} bytes) → ${destination.deviceId}")
                 session.updateState(TransferState.ACTIVE)
 
                 // Send FILE_TRANSFER_START
@@ -111,8 +114,10 @@ class FileTransferService @Inject constructor(
                 val endPayload = FileEndMessage(offset, hash).toBytes()
                 channel.send(ProtocolMessage(MessageType.FILE_TRANSFER_END, endPayload))
 
+                Log.i(TAG, "sendFile DONE: ${file.name} ($offset bytes sent)")
                 session.updateState(TransferState.COMPLETED)
             } catch (e: Exception) {
+                Log.e(TAG, "sendFile FAILED: ${file.name} — ${e.javaClass.simpleName}: ${e.message}", e)
                 session.updateState(TransferState.FAILED)
                 // Best-effort error message to remote peer.
                 try {
@@ -172,6 +177,7 @@ class FileTransferService @Inject constructor(
             when (message.type) {
                 MessageType.FILE_TRANSFER_START -> {
                     val start = FileStartMessage.fromBytes(message.payload)
+                    Log.i(TAG, "receiveFile START: ${start.fileName} (${start.totalBytes} bytes)")
                     currentSessionId  = start.sessionId
                     currentFileName   = start.fileName
                     currentTotalBytes = start.totalBytes
@@ -208,8 +214,10 @@ class FileTransferService @Inject constructor(
                     }
                     val actualHash = currentDigest?.digest() ?: ByteArray(0)
                     if (actualHash.contentEquals(end.sha256Hash)) {
+                        Log.i(TAG, "receiveFile DONE: $currentFileName — hash OK")
                         currentReceiveSession?.updateState(TransferState.COMPLETED)
                     } else {
+                        Log.e(TAG, "receiveFile FAILED: $currentFileName — SHA-256 mismatch!")
                         currentOutFile?.delete()
                         currentReceiveSession?.updateState(TransferState.FAILED)
                     }

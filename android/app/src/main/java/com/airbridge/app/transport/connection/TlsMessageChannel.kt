@@ -14,6 +14,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import android.util.Log
 import java.io.BufferedInputStream
 import java.io.BufferedOutputStream
 import java.io.DataInputStream
@@ -69,6 +70,7 @@ class TlsMessageChannel(
     private val lastPongMs = AtomicLong(System.currentTimeMillis())
 
     companion object {
+        private const val TAG                   = "AirBridge/Channel"
         private const val KEEPALIVE_INTERVAL_MS = 30_000L
         private const val PONG_TIMEOUT_MS       = 10_000L
     }
@@ -91,6 +93,7 @@ class TlsMessageChannel(
                 val payloadSize = try {
                     input.readInt()
                 } catch (e: EOFException) {
+                    Log.i(TAG, "[$remoteDeviceId] EOF — channel closed cleanly")
                     break  // clean close
                 }
 
@@ -124,11 +127,16 @@ class TlsMessageChannel(
                         lastPongMs.set(System.currentTimeMillis())
                     }
                     else -> {
+                        Log.d(TAG, "[$remoteDeviceId] RX type=${messageType} len=${payload.size}")
                         emit(ProtocolMessage(type = messageType, payload = payload))
                     }
                 }
             }
+        } catch (e: Exception) {
+            Log.e(TAG, "[$remoteDeviceId] Read loop error: ${e.javaClass.simpleName}: ${e.message}", e)
+            throw e
         } finally {
+            Log.i(TAG, "[$remoteDeviceId] incomingMessages flow ended, connected=${_connected.get()}")
             _connected.set(false)
         }
     }.flowOn(Dispatchers.IO)
@@ -179,8 +187,10 @@ class TlsMessageChannel(
                 val pingTime = System.currentTimeMillis()
                 val sendOk = try {
                     send(ProtocolMessage(MessageType.PING, ByteArray(0)))
+                    Log.d(TAG, "[$remoteDeviceId] PING sent")
                     true
                 } catch (e: Exception) {
+                    Log.e(TAG, "[$remoteDeviceId] PING send failed: ${e.message}")
                     false
                 }
                 if (!sendOk) break
@@ -194,8 +204,11 @@ class TlsMessageChannel(
 
                 if (lastPongMs.get() < pingTime) {
                     // No PONG received — treat as dead connection
+                    Log.w(TAG, "[$remoteDeviceId] PONG timeout — closing channel")
                     close()
                     break
+                } else {
+                    Log.d(TAG, "[$remoteDeviceId] PONG received OK")
                 }
             }
         }

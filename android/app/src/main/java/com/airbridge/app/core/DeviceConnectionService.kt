@@ -7,6 +7,7 @@ import com.airbridge.app.core.models.DeviceType
 import com.airbridge.app.transport.interfaces.IConnectionManager
 import com.airbridge.app.transport.interfaces.IMessageChannel
 import com.airbridge.app.transport.protocol.MessageType
+import android.util.Log
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -56,6 +57,7 @@ class DeviceConnectionService @Inject constructor(
 ) {
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val TAG = "AirBridge/ConnSvc"
 
     // ── Active session registry ───────────────────────────────────────────
 
@@ -146,26 +148,29 @@ class DeviceConnectionService @Inject constructor(
     fun registerSession(deviceId: String, channel: IMessageChannel) {
         _sessions[deviceId] = channel
         _connectedDeviceIds.value = _connectedDeviceIds.value + deviceId
+        Log.i(TAG, "Session registered: $deviceId")
 
         // Dispatch incoming messages to registered handlers; detect disconnect in finally.
         scope.launch {
             try {
                 channel.incomingMessages.collect { message ->
+                    Log.d(TAG, "[$deviceId] RX type=${message.type} len=${message.payload.size}")
                     val handlers = _messageHandlers[deviceId] ?: return@collect
                     for (handler in handlers) {
                         try {
                             handler(message)
-                        } catch (_: Exception) {
-                            // A misbehaving handler must not kill the dispatch loop.
+                        } catch (e: Exception) {
+                            Log.e(TAG, "[$deviceId] Handler error for type=${message.type}: ${e.message}", e)
                         }
                     }
                 }
-            } catch (_: Exception) {
-                // Transport error — treat as disconnect.
+            } catch (e: Exception) {
+                Log.e(TAG, "[$deviceId] Transport error: ${e.javaClass.simpleName}: ${e.message}", e)
             } finally {
                 _sessions.remove(deviceId, channel)
                 _messageHandlers.remove(deviceId)
                 _connectedDeviceIds.value = _connectedDeviceIds.value - deviceId
+                Log.i(TAG, "Session closed: $deviceId")
             }
         }
     }
@@ -209,7 +214,7 @@ class DeviceConnectionService @Inject constructor(
                 }
             }
         } catch (e: Exception) {
-            // Log and discard — one bad connection must not kill the accept loop.
+            Log.e(TAG, "routeChannel error for ${channel.remoteDeviceId}: ${e.message}", e)
         }
     }
 }
