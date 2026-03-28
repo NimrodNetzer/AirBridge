@@ -41,6 +41,7 @@ local.properties
 .idea/
 *.keystore
 !debug.keystore
+*.jks
 captures/
 .externalNativeBuild/
 .cxx/
