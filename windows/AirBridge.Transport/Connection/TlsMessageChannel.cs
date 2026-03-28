@@ -130,13 +130,18 @@ public sealed class TlsMessageChannel : IMessageChannel
             }
             catch (Exception ex) when (IsNetworkException(ex))
             {
+                // On Windows, SslStream throws a SocketException (connection reset /
+                // forcibly closed) when the remote side closes without a TLS close_notify.
+                // Treat any network exception during the header read as a clean disconnect
+                // and return null — the same as a graceful 0-byte EOF.
+                _ = ex; // suppress unused-variable warning
                 SignalDisconnect();
-                throw;
+                return null;
             }
 
             if (bytesRead == 0)
             {
-                // Clean close from remote side
+                // Clean close from remote side (graceful TLS close_notify)
                 _connected = false;
                 return null;
             }

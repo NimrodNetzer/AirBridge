@@ -109,6 +109,33 @@ public class TlsMessageChannelIntegrationTests : IAsyncLifetime
         await server.DisposeAsync();
     }
 
+    // ── Test 1b: Clean close — ReceiveAsync returns null ─────────────────────
+
+    /// <summary>
+    /// When the remote side closes its socket without a TLS close_notify
+    /// (i.e. calls <c>socket.Close()</c> / <c>socket.Dispose()</c>),
+    /// <see cref="TlsMessageChannel.ReceiveAsync"/> must return <c>null</c>
+    /// rather than throwing a <see cref="SocketException"/> or
+    /// <see cref="System.IO.IOException"/>.
+    /// </summary>
+    [Fact]
+    public async Task CleanClose_ReceiverGetsNull()
+    {
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        var (client, server) = await CreateLoopbackPairAsync(cts.Token);
+
+        // Dispose the client side — no TLS close_notify, raw socket close.
+        await client.DisposeAsync();
+
+        // Server's ReceiveAsync must return null (not throw).
+        ProtocolMessage? received = await server.ReceiveAsync(cts.Token);
+
+        Assert.Null(received);
+        Assert.False(server.IsConnected);
+
+        await server.DisposeAsync();
+    }
+
     // ── Test 2: Mid-frame drop ────────────────────────────────────────────────
 
     /// <summary>
