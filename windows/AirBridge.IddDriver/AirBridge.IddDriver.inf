@@ -18,7 +18,7 @@ Signature   = "$WINDOWS NT$"
 Class       = Display
 ClassGuid   = {4D36E968-E325-11CE-BFC1-08002BE10318}
 Provider    = %ManufacturerName%
-CatalogFile = AirBridge.IddDriver.cat
+CatalogFile = AirBridge.IddDriver.inf.cat
 DriverVer   = 03/25/2026, 1.0.0.0
 PnpLockdown = 1
 
@@ -59,7 +59,7 @@ ErrorControl  = 1
 ServiceBinary = %12%\WUDFRd.sys
 
 [AirBridgeIdd_Install.NT.Wdf]
-UmdfDriver           = AirBridge.IddDriver
+UmdfService          = AirBridge.IddDriver, AirBridgeIdd_Install_UmdfService
 UmdfServiceOrder     = AirBridge.IddDriver
 UmdfImpersonationLevel     = Impersonation
 UmdfMethodNeitherAction    = Copy
