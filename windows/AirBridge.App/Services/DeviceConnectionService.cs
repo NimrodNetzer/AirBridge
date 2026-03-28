@@ -1,6 +1,7 @@
 using AirBridge.Core.Interfaces;
 using AirBridge.Core.Models;
 using AirBridge.Core.Pairing;
+using AirBridge.Transfer.Interfaces;
 using AirBridge.Transport.Interfaces;
 using AirBridge.Transport.Protocol;
 using System.Collections.Concurrent;
@@ -19,6 +20,7 @@ public sealed class DeviceConnectionService : IDisposable
     private readonly IConnectionManager _connectionManager;
     private readonly PairingService _pairing;
     private readonly IDeviceRegistry _registry;
+    private readonly IFileTransferService _fileTransfer;
     private CancellationTokenSource? _discoveryCts;
     private IMessageChannel? _pendingPairingChannel;
     private byte[]? _pendingRemoteKey;
@@ -84,10 +86,12 @@ public sealed class DeviceConnectionService : IDisposable
         IDiscoveryService discovery,
         IConnectionManager connectionManager,
         IPairingService pairing,
-        IDeviceRegistry registry)
+        IDeviceRegistry registry,
+        IFileTransferService fileTransfer)
     {
         _discovery         = discovery;
         _connectionManager = connectionManager;
+        _fileTransfer      = fileTransfer;
         // PairingService exposes PinGenerated which IPairingService does not —
         // cast is safe because App.cs registers PairingService as the concrete type.
         _pairing  = (PairingService)pairing;
@@ -171,6 +175,12 @@ public sealed class DeviceConnectionService : IDisposable
         // Replace any stale session for this device.
         _activeSessions[deviceId] = channel;
         AppLog.Info($"Session registered: {deviceId}");
+
+        // Wire the file transfer receive handler so incoming files are processed
+        // regardless of which page the user is on.
+        _fileTransfer.SetChannel(channel);
+        AddMessageHandler(deviceId, _fileTransfer.CreateReceiveHandler());
+
         DeviceConnected?.Invoke(this, deviceId);
 
         // Monitor for disconnect on a background task.
@@ -217,6 +227,7 @@ public sealed class DeviceConnectionService : IDisposable
         {
             _activeSessions.TryRemove(new KeyValuePair<string, IMessageChannel>(deviceId, channel));
             _messageHandlers.TryRemove(deviceId, out _);
+            _fileTransfer.SetChannel(null);
             AppLog.Info($"Session closed: {deviceId}");
             DeviceDisconnected?.Invoke(this, deviceId);
         }

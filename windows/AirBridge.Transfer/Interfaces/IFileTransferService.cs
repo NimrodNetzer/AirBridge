@@ -1,5 +1,7 @@
 using AirBridge.Core.Interfaces;
 using AirBridge.Core.Models;
+using AirBridge.Transport.Interfaces;
+using AirBridge.Transport.Protocol;
 
 namespace AirBridge.Transfer.Interfaces;
 
@@ -20,4 +22,17 @@ public interface IFileTransferService
 
     /// <summary>Returns all active or recent transfer sessions.</summary>
     IReadOnlyList<ITransferSession> GetActiveSessions();
+
+    /// <summary>
+    /// Returns a message handler that processes inbound FILE_TRANSFER_START/CHUNK/END messages
+    /// and saves received files to the AirBridge Downloads folder.
+    /// Register with <c>DeviceConnectionService.AddMessageHandler</c> after a session is established.
+    /// </summary>
+    Func<ProtocolMessage, Task> CreateReceiveHandler();
+
+    /// <summary>
+    /// Sets the active outbound channel for <see cref="SendFileAsync"/>.
+    /// Call with <see langword="null"/> when the device disconnects.
+    /// </summary>
+    void SetChannel(IMessageChannel? channel);
 }

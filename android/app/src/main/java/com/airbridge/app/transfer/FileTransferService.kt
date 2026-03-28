@@ -2,6 +2,7 @@ package com.airbridge.app.transfer
 
 import android.content.Context
 import android.os.Environment
+import android.os.PowerManager
 import com.airbridge.app.core.DeviceConnectionService
 import com.airbridge.app.core.interfaces.ITransferSession
 import com.airbridge.app.core.interfaces.TransferState
@@ -45,6 +46,12 @@ class FileTransferService @Inject constructor(
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val TAG = "AirBridge/Transfer"
+
+    /** WakeLock held during an active receive to prevent the app being frozen mid-transfer. */
+    private val wakeLock: PowerManager.WakeLock by lazy {
+        val pm = context.getSystemService(Context.POWER_SERVICE) as PowerManager
+        pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "AirBridge:FileReceive")
+    }
 
     private val _activeSessions = CopyOnWriteArrayList<ITransferSession>()
 
@@ -178,6 +185,7 @@ class FileTransferService @Inject constructor(
                 MessageType.FILE_TRANSFER_START -> {
                     val start = FileStartMessage.fromBytes(message.payload)
                     Log.i(TAG, "receiveFile START: ${start.fileName} (${start.totalBytes} bytes)")
+                    if (!wakeLock.isHeld) wakeLock.acquire(10 * 60 * 1000L) // 10 min max
                     currentSessionId  = start.sessionId
                     currentFileName   = start.fileName
                     currentTotalBytes = start.totalBytes
@@ -221,6 +229,7 @@ class FileTransferService @Inject constructor(
                         currentOutFile?.delete()
                         currentReceiveSession?.updateState(TransferState.FAILED)
                     }
+                    if (wakeLock.isHeld) wakeLock.release()
                     // Reset state machine
                     currentSessionId    = null
                     currentFileName     = null
@@ -235,6 +244,7 @@ class FileTransferService @Inject constructor(
                     currentOutputStream?.close()
                     currentOutFile?.delete()
                     currentReceiveSession?.updateState(TransferState.FAILED)
+                    if (wakeLock.isHeld) wakeLock.release()
                     currentSessionId    = null
                     currentReceiveSession = null
                 }
