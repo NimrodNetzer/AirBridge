@@ -35,4 +35,10 @@ public interface IFileTransferService
     /// Call with <see langword="null"/> when the device disconnects.
     /// </summary>
     void SetChannel(IMessageChannel? channel);
+
+    /// <summary>
+    /// Clears the active channel only if it is still <paramref name="expected"/>.
+    /// Safe to call from a disconnected session's finally block without wiping a newly registered channel.
+    /// </summary>
+    void ClearChannel(IMessageChannel expected);
 }
