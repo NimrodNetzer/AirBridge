@@ -5,6 +5,7 @@ import com.airbridge.app.transport.protocol.MessageType
 import com.airbridge.app.transport.protocol.ProtocolMessage
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
@@ -64,6 +65,9 @@ class TlsMessageChannel(
 
     private val _connected = AtomicBoolean(true)
     override val isConnected: Boolean get() = _connected.get()
+
+    /** Job for the active keepalive loop — cancelled in [close] so it stops immediately. */
+    private var keepaliveJob: Job? = null
 
     private val out = DataOutputStream(BufferedOutputStream(socket.getOutputStream()))
     private val input  = DataInputStream(BufferedInputStream(socket.getInputStream()))
@@ -194,7 +198,7 @@ class TlsMessageChannel(
      * Should be called once, immediately after the HANDSHAKE exchange completes.
      */
     fun startKeepalive(scope: CoroutineScope) {
-        scope.launch(Dispatchers.IO) {
+        keepaliveJob = scope.launch(Dispatchers.IO) {
             while (isActive && _connected.get()) {
                 delay(keepaliveIntervalMs)
                 if (!_connected.get()) break
@@ -236,6 +240,8 @@ class TlsMessageChannel(
     /** Closes the underlying socket, completing [incomingMessages]. */
     override suspend fun close(): Unit = withContext(Dispatchers.IO) {
         _connected.set(false)
+        keepaliveJob?.cancel()   // stop the keepalive loop immediately, don't wait for the next delay()
+        keepaliveJob = null
         runCatching { socket.close() }
     }
 }
