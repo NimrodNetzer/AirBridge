@@ -1,7 +1,13 @@
 package com.airbridge.app.core
 
 import android.content.Context
+import android.net.ConnectivityManager
+import android.net.Network
+import android.net.NetworkCapabilities
+import android.net.NetworkRequest
+import android.net.wifi.WifiManager
 import android.os.PowerManager
+import com.airbridge.app.core.AirBridgeLog
 import com.airbridge.app.core.interfaces.IPairingService
 import com.airbridge.app.core.interfaces.PairingResult
 import com.airbridge.app.core.models.DeviceInfo
@@ -14,8 +20,8 @@ import android.util.Log
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -79,11 +85,58 @@ class DeviceConnectionService @Inject constructor(
     private val _connectedDeviceIds = MutableStateFlow<Set<String>>(emptySet())
     val connectedDeviceIds: StateFlow<Set<String>> = _connectedDeviceIds.asStateFlow()
 
-    // ── WakeLock ──────────────────────────────────────────────────────────
+    // ── WakeLock + WifiLock ───────────────────────────────────────────────
+    // PARTIAL_WAKE_LOCK keeps the CPU running (prevents Dispatchers.IO starvation).
+    // WIFI_MODE_FULL_HIGH_PERF keeps the Wi-Fi radio active so the OS cannot silently
+    // drop the TCP socket while the screen is off or the device enters Doze.
 
     private val wakeLock: PowerManager.WakeLock by lazy {
         val pm = context.getSystemService(Context.POWER_SERVICE) as PowerManager
         pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "AirBridge:Connection")
+    }
+
+    private val wifiLock: WifiManager.WifiLock by lazy {
+        val wm = context.getSystemService(Context.WIFI_SERVICE) as WifiManager
+        wm.createWifiLock(WifiManager.WIFI_MODE_FULL_HIGH_PERF, "AirBridge:Connection")
+    }
+
+    // ── Network monitoring ────────────────────────────────────────────────
+    // Watches for Wi-Fi availability changes. When the network comes back after
+    // a Doze window or a brief drop, we cancel any backoff delay in active reconnect
+    // loops so they retry immediately instead of waiting up to 60 s.
+
+    private var networkCallback: ConnectivityManager.NetworkCallback? = null
+    // Backoff delay jobs keyed by device ID — cancelled when network becomes available.
+    private val reconnectDelayJobs = ConcurrentHashMap<String, Job>()
+
+    /** Call once from [AirBridgeConnectionService.onCreate] to start monitoring. */
+    fun startNetworkMonitoring() {
+        val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+        val cb = object : ConnectivityManager.NetworkCallback() {
+            override fun onAvailable(network: Network) {
+                AirBridgeLog.info("[ConnSvc] Wi-Fi network available — waking reconnect loops")
+                reconnectDelayJobs.values.forEach { it.cancel() }
+            }
+            override fun onLost(network: Network) {
+                AirBridgeLog.warn("[ConnSvc] Wi-Fi network lost")
+            }
+        }
+        val request = NetworkRequest.Builder()
+            .addTransportType(NetworkCapabilities.TRANSPORT_WIFI)
+            .build()
+        cm.registerNetworkCallback(request, cb)
+        networkCallback = cb
+        AirBridgeLog.info("[ConnSvc] Network monitoring started")
+    }
+
+    /** Call from [AirBridgeConnectionService.onDestroy]. */
+    fun stopNetworkMonitoring() {
+        networkCallback?.let {
+            val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+            runCatching { cm.unregisterNetworkCallback(it) }
+            networkCallback = null
+            AirBridgeLog.info("[ConnSvc] Network monitoring stopped")
+        }
     }
 
     // ── Public flows ──────────────────────────────────────────────────────
@@ -117,54 +170,47 @@ class DeviceConnectionService @Inject constructor(
     }
 
     /**
-     * Connects to an already-paired [device] without running the pairing handshake,
-     * then registers the resulting channel as the active session.
+     * Connects to an already-paired [device] and keeps the connection alive indefinitely.
      *
-     * The TCP connect attempt is bounded by a 15-second timeout.
-     * On disconnect, retries with exponential back-off (base 2 s, max 30 s, up to 5 attempts).
-     * The listen side (server) never calls this — only the initiating (client) side reconnects.
+     * The loop runs until the calling coroutine's scope is cancelled (i.e. the user
+     * explicitly disconnects or exits the app).  It never gives up on its own:
+     * - A 15-second connect timeout prevents a single attempt from hanging.
+     * - On failure, exponential back-off grows from 2 s to 60 s, then stays at 60 s.
+     * - When the network comes back after a Doze/Wi-Fi drop the [NetworkCallback]
+     *   registered in [startNetworkMonitoring] cancels the active delay job so the
+     *   next attempt happens immediately rather than waiting the full back-off period.
+     * - On a successful connection that later drops, back-off resets to 2 s.
      */
     suspend fun connectToPairedDevice(device: DeviceInfo) {
-        val connectTimeoutMs = 15_000L
-        val maxAttempts      = 5
-        val backoffBase      = 2.0
-        val backoffMaxMs     = 30_000L
+        var backoffMs = 2_000L
+        AirBridgeLog.info("[ConnSvc] Starting persistent connect loop for ${device.deviceId}")
 
-        var attempt = 1
-        while (attempt <= maxAttempts) {
+        while (true) {   // exits only when the coroutine scope is cancelled
             val channel = try {
-                withTimeout(connectTimeoutMs) {
-                    connectionManager.connect(device)
-                }
-            } catch (e: TimeoutCancellationException) {
-                if (attempt >= maxAttempts) throw e
-                val delayMs = minOf(
-                    (Math.pow(backoffBase, (attempt - 1).toDouble()) * 1000).toLong(),
-                    backoffMaxMs
-                )
-                delay(delayMs)
-                attempt++
-                continue
+                withTimeout(15_000L) { connectionManager.connect(device) }
             } catch (e: Exception) {
-                if (attempt >= maxAttempts) throw e
-                val delayMs = minOf(
-                    (Math.pow(backoffBase, (attempt - 1).toDouble()) * 1000).toLong(),
-                    backoffMaxMs
-                )
-                delay(delayMs)
-                attempt++
+                AirBridgeLog.warn("[ConnSvc] Connect to ${device.deviceId} failed: ${e.javaClass.simpleName}: ${e.message}; retry in ${backoffMs}ms")
+                // Sleep with backoff, but allow the NetworkCallback to wake us early.
+                val delayJob = scope.launch { delay(backoffMs) }
+                reconnectDelayJobs[device.deviceId] = delayJob
+                delayJob.join()
+                reconnectDelayJobs.remove(device.deviceId)
+                backoffMs = minOf(backoffMs * 2, 60_000L)
                 continue
             }
 
-            // Connected — register session and wait for disconnect before retrying.
+            // Connected.
+            backoffMs = 2_000L  // reset on success
+            AirBridgeLog.info("[ConnSvc] Connected to ${device.deviceId}; registering session")
             registerSession(device.deviceId, channel)
             _establishedChannels.emit(channel)
 
-            // Block until this session ends, then loop back to reconnect.
-            channel.incomingMessages.collect { /* drain until flow completes */ }
+            // Drain until the channel closes (keepalive timeout / soTimeout / peer disconnect).
+            try {
+                channel.incomingMessages.collect { /* drain */ }
+            } catch (_: Exception) { }
 
-            // Reset attempt counter on a successful connection that later dropped.
-            attempt = 1
+            AirBridgeLog.info("[ConnSvc] Session dropped for ${device.deviceId}; reconnecting immediately")
         }
     }
 
@@ -208,19 +254,30 @@ class DeviceConnectionService @Inject constructor(
      * Must be matched by [endSession] in a finally block.
      */
     private fun startSession(deviceId: String, channel: IMessageChannel) {
+        val wasEmpty = _sessions.isEmpty()
         _sessions[deviceId] = channel
         _connectedDeviceIds.value = _connectedDeviceIds.value + deviceId
         if (!wakeLock.isHeld) wakeLock.acquire()
-        Log.i(TAG, "Session registered: $deviceId")
+        if (!wifiLock.isHeld) wifiLock.acquire()
+        // Start the foreground service on the first session so the OS cannot kill
+        // the process while the app is in the background.
+        if (wasEmpty) AirBridgeConnectionService.start(context)
+        AirBridgeLog.info("[ConnSvc] Session registered: $deviceId (total=${_sessions.size})")
     }
 
-    /** Removes the session from the registry and releases the WakeLock if no sessions remain. */
+    /** Removes the session from the registry and releases locks if no sessions remain. */
     private fun endSession(deviceId: String, channel: IMessageChannel) {
         _sessions.remove(deviceId, channel)
         _messageHandlers.remove(deviceId)
         _connectedDeviceIds.value = _connectedDeviceIds.value - deviceId
-        if (_sessions.isEmpty() && wakeLock.isHeld) wakeLock.release()
-        Log.i(TAG, "Session closed: $deviceId")
+        if (_sessions.isEmpty()) {
+            if (wakeLock.isHeld) wakeLock.release()
+            if (wifiLock.isHeld) wifiLock.release()
+            // No active sessions — release the foreground service so the OS can reclaim
+            // resources if the app stays in the background.
+            AirBridgeConnectionService.stop(context)
+        }
+        AirBridgeLog.info("[ConnSvc] Session closed: $deviceId (remaining=${_sessions.size})")
     }
 
     /**
@@ -280,7 +337,7 @@ class DeviceConnectionService @Inject constructor(
                 }
             }
         } catch (e: Exception) {
-            Log.e(TAG, "routeChannel error for ${channel.remoteDeviceId}: ${e.javaClass.simpleName}: ${e.message}", e)
+            AirBridgeLog.error("[ConnSvc] routeChannel error for ${channel.remoteDeviceId}", e)
         } finally {
             if (sessionStarted) endSession(channel.remoteDeviceId, channel)
         }
@@ -304,20 +361,21 @@ class DeviceConnectionService @Inject constructor(
                 dispatchMessage(deviceId, message)
             }
         } catch (e: Exception) {
-            Log.e(TAG, "[$deviceId] Transport error: ${e.javaClass.simpleName}: ${e.message}", e)
+            AirBridgeLog.error("[ConnSvc] [$deviceId] Transport error", e)
         } finally {
             endSession(deviceId, channel)
         }
     }
 
     private suspend fun dispatchMessage(deviceId: String, message: ProtocolMessage) {
-        Log.d(TAG, "[$deviceId] RX type=${message.type} len=${message.payload.size}")
+        // Note: TlsMessageChannel already logs every received message at DEBUG level.
+        // No duplicate log here to avoid doubling the output during file transfers.
         val handlers = _messageHandlers[deviceId] ?: return
         for (handler in handlers) {
             try {
                 handler(message)
             } catch (e: Exception) {
-                Log.e(TAG, "[$deviceId] Handler error for type=${message.type}: ${e.message}", e)
+                AirBridgeLog.error("[ConnSvc] [$deviceId] Handler error for type=${message.type}", e)
             }
         }
     }

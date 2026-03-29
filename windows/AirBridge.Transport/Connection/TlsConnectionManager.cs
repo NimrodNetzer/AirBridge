@@ -298,18 +298,35 @@ public sealed class TlsConnectionManager : IConnectionManager
             try
             {
                 var json = Encoding.UTF8.GetString(received.Payload);
+                AirBridge.Core.AppLog.Info($"[TlsConnMgr] HANDSHAKE payload from {channel.RemoteDeviceId}: {json}");
                 using var doc = JsonDocument.Parse(json);
                 if (doc.RootElement.TryGetProperty("deviceId", out var idProp))
                 {
                     var peerId = idProp.GetString();
                     if (!string.IsNullOrEmpty(peerId))
+                    {
+                        AirBridge.Core.AppLog.Info($"[TlsConnMgr] RemoteDeviceId resolved: {channel.RemoteDeviceId} → {peerId}");
                         channel.RemoteDeviceId = peerId;
+                    }
+                    else
+                    {
+                        AirBridge.Core.AppLog.Warn($"[TlsConnMgr] HANDSHAKE deviceId was empty — keeping placeholder {channel.RemoteDeviceId}");
+                    }
+                }
+                else
+                {
+                    AirBridge.Core.AppLog.Warn($"[TlsConnMgr] HANDSHAKE JSON missing 'deviceId' field — keeping placeholder {channel.RemoteDeviceId}; json={json}");
                 }
             }
-            catch (JsonException)
+            catch (JsonException ex)
             {
                 // Malformed JSON — keep the IP-address placeholder; do not abort connection
+                AirBridge.Core.AppLog.Warn($"[TlsConnMgr] HANDSHAKE JSON parse failed — keeping placeholder {channel.RemoteDeviceId}; error={ex.Message}");
             }
+        }
+        else
+        {
+            AirBridge.Core.AppLog.Warn($"[TlsConnMgr] Expected HANDSHAKE but got type={received?.Type}, payload={received?.Payload.Length ?? 0}B — keeping placeholder {channel.RemoteDeviceId}");
         }
     }
 

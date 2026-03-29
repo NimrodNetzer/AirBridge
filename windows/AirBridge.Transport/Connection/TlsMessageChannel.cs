@@ -101,9 +101,18 @@ public sealed class TlsMessageChannel : IMessageChannel
         frame[4] = (byte)message.Type;
         message.Payload.CopyTo(frame, 5);
 
-        await _writeLock.WaitAsync(cancellationToken).ConfigureAwait(false);
+        // Guard: if the channel has already been disposed (e.g. session replacement
+        // disposed the old channel while a file-transfer chunk was mid-flight), fail
+        // fast instead of letting _writeLock.WaitAsync throw ObjectDisposedException
+        // from the SemaphoreSlim internals, which would surface as an unhandled exception.
+        if (_disposed)
+            throw new ObjectDisposedException(nameof(TlsMessageChannel), $"Cannot send on a disposed channel (remote={RemoteDeviceId}).");
+
+        bool lockAcquired = false;
         try
         {
+            await _writeLock.WaitAsync(cancellationToken).ConfigureAwait(false);
+            lockAcquired = true;
             await _stream.WriteAsync(frame, cancellationToken).ConfigureAwait(false);
             await _stream.FlushAsync(cancellationToken).ConfigureAwait(false);
         }
@@ -115,7 +124,7 @@ public sealed class TlsMessageChannel : IMessageChannel
         }
         finally
         {
-            _writeLock.Release();
+            if (lockAcquired && !_disposed) _writeLock.Release();
         }
     }
 

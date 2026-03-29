@@ -15,6 +15,7 @@ import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import com.airbridge.app.core.AirBridgeLog
 import org.json.JSONObject
 import java.io.DataInputStream
 import java.io.DataOutputStream
@@ -95,19 +96,19 @@ class TlsConnectionManager(
      */
     override suspend fun connect(remoteDevice: DeviceInfo): IMessageChannel =
         withContext(Dispatchers.IO) {
+            AirBridgeLog.info("[TlsConnMgr] Connecting → ${remoteDevice.ipAddress}:${remoteDevice.port} (device=${remoteDevice.deviceId})")
             val socket = sslContext.socketFactory
                 .createSocket(remoteDevice.ipAddress, remoteDevice.port) as SSLSocket
 
             socket.apply {
                 enabledProtocols = arrayOf("TLSv1.3")
-                // Initiate TLS handshake explicitly before handing off to channel
+                AirBridgeLog.info("[TlsConnMgr] TCP connected → ${remoteDevice.ipAddress}:${remoteDevice.port}; starting TLS handshake")
                 startHandshake()
             }
+            AirBridgeLog.info("[TlsConnMgr] TLS authenticated (client) → ${remoteDevice.ipAddress}; performing HANDSHAKE exchange")
 
-            // Exchange HANDSHAKE frames using the raw socket streams BEFORE wrapping in
-            // TlsMessageChannel.  This ensures no bytes are buffered ahead by the channel's
-            // internal BufferedInputStream before the HANDSHAKE is consumed.
             val peerId = exchangeHandshakeFrames(socket) ?: remoteDevice.deviceId
+            AirBridgeLog.info("[TlsConnMgr] HANDSHAKE complete; remote=$peerId; starting keepalive")
 
             val channel = TlsMessageChannel(socket = socket, remoteDeviceId = peerId)
             channel.startKeepalive(scope)
@@ -135,11 +136,13 @@ class TlsConnectionManager(
                 while (isActive && !ss.isClosed) {
                     try {
                         val client = ss.accept() as SSLSocket
+                        val remoteAddr = client.inetAddress.hostAddress ?: "unknown"
+                        AirBridgeLog.info("[TlsConnMgr] Inbound TCP from $remoteAddr; starting TLS server handshake")
                         client.startHandshake()
+                        AirBridgeLog.info("[TlsConnMgr] TLS authenticated (server) ← $remoteAddr; performing HANDSHAKE exchange")
 
-                        // Exchange HANDSHAKE frames before wrapping in TlsMessageChannel
-                        val peerId = exchangeHandshakeFrames(client)
-                            ?: (client.inetAddress.hostAddress ?: "unknown")
+                        val peerId = exchangeHandshakeFrames(client) ?: remoteAddr
+                        AirBridgeLog.info("[TlsConnMgr] HANDSHAKE complete; remote=$peerId; starting keepalive")
 
                         val channel = TlsMessageChannel(socket = client, remoteDeviceId = peerId)
                         channel.startKeepalive(scope)
@@ -147,6 +150,7 @@ class TlsConnectionManager(
                     } catch (e: Exception) {
                         // Accept loop continues unless the server socket itself is closed
                         if (ss.isClosed) break
+                        AirBridgeLog.error("[TlsConnMgr] Accept/handshake error (loop continues)", e)
                     }
                 }
             }

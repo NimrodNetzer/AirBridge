@@ -17,12 +17,14 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import android.util.Log
+import com.airbridge.app.core.AirBridgeLog
 import java.io.BufferedInputStream
 import java.io.BufferedOutputStream
 import java.io.DataInputStream
 import java.io.DataOutputStream
 import java.io.EOFException
 import java.net.Socket
+import java.net.SocketTimeoutException
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
 import javax.net.ssl.SSLSocket
@@ -82,6 +84,23 @@ class TlsMessageChannel(
         private const val TAG                   = "AirBridge/Channel"
         private const val KEEPALIVE_INTERVAL_MS = 30_000L
         private const val PONG_TIMEOUT_MS       = 10_000L
+        /**
+         * Socket read timeout.  Must be > KEEPALIVE_INTERVAL_MS + PONG_TIMEOUT_MS so a
+         * healthy socket never times out between pings.  If the OS silently drops the
+         * connection (Android Doze / Wi-Fi sleep), [DataInputStream.readInt] will throw a
+         * [SocketTimeoutException] within this window, which the read loop treats as a
+         * disconnection event — preventing the loop from blocking indefinitely.
+         */
+        private const val SOCKET_READ_TIMEOUT_MS = 45_000L  // 30s ping interval + 10s pong + 5s margin
+    }
+
+    init {
+        // Set SO_TIMEOUT so blocking reads wake up even when Android silently drops the
+        // connection (Doze mode / Wi-Fi sleep policy).  Without this the read loop in
+        // [incomingMessages] can block indefinitely — the keepalive loop running in a
+        // separate coroutine would eventually trigger, but the blocked read prevents the
+        // socket from closing cleanly.
+        socket.soTimeout = SOCKET_READ_TIMEOUT_MS.toInt()
     }
 
     // -------------------------------------------------------------------------
@@ -103,8 +122,15 @@ class TlsMessageChannel(
                 val payloadSize = try {
                     input.readInt()
                 } catch (e: EOFException) {
-                    Log.i(TAG, "[$remoteDeviceId] EOF — channel closed cleanly")
+                    AirBridgeLog.info("[$remoteDeviceId] EOF — channel closed cleanly")
                     break  // clean close
+                } catch (e: SocketTimeoutException) {
+                    // SO_TIMEOUT fired: no data from peer within 45 s.  The keepalive loop
+                    // should have already closed the channel via PONG timeout, but if the
+                    // write path was also blocked (Doze killed Wi-Fi) we catch it here.
+                    AirBridgeLog.warn("[$remoteDeviceId] Silent socket death — read timeout (${SOCKET_READ_TIMEOUT_MS}ms) with no data; closing channel")
+                    _connected.set(false)
+                    break
                 }
 
                 if (payloadSize < 0) {
@@ -137,7 +163,7 @@ class TlsMessageChannel(
                         lastPongMs.set(System.currentTimeMillis())
                     }
                     else -> {
-                        Log.d(TAG, "[$remoteDeviceId] RX type=${messageType} len=${payload.size}")
+                        AirBridgeLog.debug("[$remoteDeviceId] RX type=${messageType} len=${payload.size}")
                         emit(ProtocolMessage(type = messageType, payload = payload))
                     }
                 }
@@ -148,7 +174,7 @@ class TlsMessageChannel(
             cancelledByCollector = true
             throw e
         } catch (e: Exception) {
-            Log.e(TAG, "[$remoteDeviceId] Read loop error: ${e.javaClass.simpleName}: ${e.message}", e)
+            AirBridgeLog.error("[$remoteDeviceId] Read loop error: ${e.javaClass.simpleName}: ${e.message}", e)
             _connected.set(false)
             throw e
         } finally {
@@ -156,7 +182,7 @@ class TlsMessageChannel(
             // For collector cancellation (first{} etc.), leave connected so the next
             // collect() call can start a new read loop on the same socket.
             if (!cancelledByCollector) _connected.set(false)
-            Log.i(TAG, "[$remoteDeviceId] incomingMessages flow ended, connected=${_connected.get()}")
+            AirBridgeLog.info("[$remoteDeviceId] incomingMessages flow ended, connected=${_connected.get()}")
         }
     }.flowOn(Dispatchers.IO)
 
@@ -206,10 +232,10 @@ class TlsMessageChannel(
                 val pingTime = System.currentTimeMillis()
                 val sendOk = try {
                     send(ProtocolMessage(MessageType.PING, ByteArray(0)))
-                    Log.d(TAG, "[$remoteDeviceId] PING sent")
+                    AirBridgeLog.debug("[$remoteDeviceId] PING sent")
                     true
                 } catch (e: Exception) {
-                    Log.e(TAG, "[$remoteDeviceId] PING send failed: ${e.message}")
+                    AirBridgeLog.error("[$remoteDeviceId] PING send failed — ${e.javaClass.simpleName}: ${e.message}")
                     false
                 }
                 if (!sendOk) break
@@ -223,11 +249,11 @@ class TlsMessageChannel(
 
                 if (lastPongMs.get() < pingTime) {
                     // No PONG received — treat as dead connection
-                    Log.w(TAG, "[$remoteDeviceId] PONG timeout — closing channel")
+                    AirBridgeLog.warn("[$remoteDeviceId] PONG timeout — closing channel (silent socket death suspected)")
                     close()
                     break
                 } else {
-                    Log.d(TAG, "[$remoteDeviceId] PONG received OK")
+                    AirBridgeLog.debug("[$remoteDeviceId] PONG received OK")
                 }
             }
         }

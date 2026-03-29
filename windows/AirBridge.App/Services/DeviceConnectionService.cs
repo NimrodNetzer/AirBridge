@@ -153,47 +153,51 @@ public sealed class DeviceConnectionService : IDisposable
     }
 
     /// <summary>
-    /// Connects to an already-paired <paramref name="device"/> without running the pairing
-    /// handshake. Stores the resulting channel as the active session and begins monitoring for
-    /// disconnection. The TCP connect attempt is bounded by a 15-second timeout.
-    /// On disconnect, retries with exponential back-off (base 2 s, max 30 s, up to 5 attempts).
+    /// Connects to an already-paired <paramref name="device"/> and keeps the connection alive
+    /// indefinitely — until <paramref name="ct"/> is cancelled (i.e. the user explicitly
+    /// disconnects or closes the app).
+    /// <para>
+    /// The loop never gives up on its own:
+    /// <list type="bullet">
+    ///   <item>A 15-second connect timeout prevents a single attempt from hanging.</item>
+    ///   <item>On failure, exponential back-off grows from 2 s → 60 s, then stays at 60 s.</item>
+    ///   <item>On a successful connection that later drops, back-off resets to 2 s.</item>
+    /// </list>
+    /// </para>
     /// </summary>
     public async Task ConnectToPairedDeviceAsync(DeviceInfo device, CancellationToken ct)
     {
-        const int    ConnectTimeoutMs = 15_000;
-        const int    MaxAttempts      = 5;
-        const double BackoffBase      = 2.0;
-        const int    BackoffMaxMs     = 30_000;
+        var backoffMs = 2_000;
+        AppLog.Info($"[ConnSvc] Starting persistent connect loop for {device.DeviceId}");
 
-        for (int attempt = 1; attempt <= MaxAttempts; attempt++)
+        while (!ct.IsCancellationRequested)
         {
-            ct.ThrowIfCancellationRequested();
-
-            using var connectCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-            connectCts.CancelAfter(ConnectTimeoutMs);
-
             IMessageChannel channel;
             try
             {
+                using var connectCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                connectCts.CancelAfter(15_000);
                 channel = await _connectionManager.ConnectAsync(device, connectCts.Token)
                                                   .ConfigureAwait(false);
             }
-            catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
             {
-                // Connect timed out — treat as transient failure and retry.
-                if (attempt == MaxAttempts) throw new TimeoutException(
-                    $"Failed to connect to {device.DeviceId} after {MaxAttempts} attempts (connect timeout).");
-                goto Backoff;
+                return; // User cancelled — stop reconnecting.
             }
-            catch (Exception) when (attempt < MaxAttempts)
+            catch (Exception ex)
             {
-                goto Backoff;
+                AppLog.Warn($"[ConnSvc] Connect to {device.DeviceId} failed: {ex.Message}; retry in {backoffMs}ms");
+                try { await Task.Delay(backoffMs, ct).ConfigureAwait(false); }
+                catch (OperationCanceledException) { return; }
+                backoffMs = Math.Min(backoffMs * 2, 60_000);
+                continue;
             }
 
             // Connected — register session and watch for disconnect.
+            backoffMs = 2_000; // reset on success
+            AppLog.Info($"[ConnSvc] Connected to {device.DeviceId}; registering session");
             RegisterSession(device.DeviceId, channel);
 
-            // Wait until this session closes before attempting a reconnect.
             var disconnectTcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
             void OnDisconnect(object? s, string id)
             {
@@ -206,22 +210,14 @@ public sealed class DeviceConnectionService : IDisposable
             }
             catch (OperationCanceledException)
             {
-                return; // Caller cancelled — do not reconnect.
+                return; // User cancelled — stop reconnecting.
             }
             finally
             {
                 DeviceDisconnected -= OnDisconnect;
             }
 
-            // Session dropped — retry from attempt 1 (reset loop).
-            attempt = 0; // loop increment will make it 1
-            continue;
-
-            Backoff:
-            var delayMs = (int)Math.Min(
-                Math.Pow(BackoffBase, attempt - 1) * 1000,
-                BackoffMaxMs);
-            await Task.Delay(delayMs, ct).ConfigureAwait(false);
+            AppLog.Info($"[ConnSvc] Session dropped for {device.DeviceId}; reconnecting immediately");
         }
     }
 
@@ -234,6 +230,19 @@ public sealed class DeviceConnectionService : IDisposable
     /// </summary>
     public void RegisterSession(string deviceId, IMessageChannel channel)
     {
+        // If there is already a healthy session for this device, closing it would abort an
+        // in-flight transfer.  Instead, close the new duplicate and keep the live session.
+        // This handles the race where both ConnectToPairedDeviceAsync (outbound) and
+        // OnConnectionReceived (inbound) succeed within the same reconnect window.
+        if (_activeSessions.TryGetValue(deviceId, out var existingChannel) &&
+            !ReferenceEquals(existingChannel, channel) &&
+            existingChannel.IsConnected)
+        {
+            AppLog.Warn($"[ConnSvc] RegisterSession: duplicate for {deviceId} — existing session still alive; closing new duplicate");
+            _ = channel.DisposeAsync().AsTask();
+            return;
+        }
+
         // Close any existing session for this device before replacing it.
         // This prevents two MonitorSessionAsync loops from racing on the same device ID,
         // which would cause one to steal PONG frames intended for the other's keepalive check.
@@ -327,7 +336,11 @@ public sealed class DeviceConnectionService : IDisposable
             // RemoteDeviceId is set from the HANDSHAKE exchange that occurs before this
             // event fires.  If this device is already paired, register the session
             // immediately — Android does not send a first application message on reconnect.
-            if (_pairing.IsPaired(channel.RemoteDeviceId))
+            var isPaired     = _pairing.IsPaired(channel.RemoteDeviceId);
+            var hasSession   = _activeSessions.ContainsKey(channel.RemoteDeviceId);
+            AppLog.Info($"[ConnSvc] Inbound: remoteId={channel.RemoteDeviceId} isPaired={isPaired} hasSession={hasSession}");
+
+            if (isPaired)
             {
                 AppLog.Info($"Reconnect from known device {channel.RemoteDeviceId} — registering immediately");
                 RegisterSession(channel.RemoteDeviceId, channel);

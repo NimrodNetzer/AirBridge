@@ -1,5 +1,6 @@
 package com.airbridge.app.mirror
 
+import com.airbridge.app.core.AirBridgeLog
 import com.airbridge.app.core.interfaces.IMirrorSession
 import com.airbridge.app.core.interfaces.InputEventArgs
 import com.airbridge.app.core.interfaces.InputEventType
@@ -79,6 +80,7 @@ class MirrorSession(
         check(_stateFlow.value == MirrorState.CONNECTING) {
             "Cannot start a session in state ${_stateFlow.value}."
         }
+        AirBridgeLog.info("[Mirror:$sessionId] CONNECTING — starting session (${width}x${height} @${fps}fps codec=$codec)")
 
         // Announce the mirror session to the Windows host
         if (captureSession != null && width > 0 && height > 0) {
@@ -116,24 +118,29 @@ class MirrorSession(
             try {
                 runReceiveLoop()
             } catch (e: CancellationException) {
+                AirBridgeLog.info("[Mirror:$sessionId] Receive loop cancelled → STOPPED")
                 _stateFlow.value = MirrorState.STOPPED
                 throw e
             } catch (e: Exception) {
+                AirBridgeLog.error("[Mirror:$sessionId] Receive loop exception → ERROR", e)
                 _stateFlow.value = MirrorState.ERROR
             }
         }
 
         // Stream frames from capture session if available
         if (captureSession != null) {
+            AirBridgeLog.info("[Mirror:$sessionId] CONNECTING → ACTIVE; streaming frames from captureSession")
             _stateFlow.value = MirrorState.ACTIVE
             captureSession.frames.collect { frame ->
                 try {
                     channel.send(ProtocolMessage(MessageType.MIRROR_FRAME, frame.toBytes()))
-                } catch (_: Exception) {
+                } catch (e: Exception) {
+                    AirBridgeLog.error("[Mirror:$sessionId] Frame send failed → ERROR", e)
                     _stateFlow.value = MirrorState.ERROR
                     return@collect
                 }
             }
+            AirBridgeLog.info("[Mirror:$sessionId] captureSession.frames completed")
         }
     }
 
@@ -199,10 +206,12 @@ class MirrorSession(
         channel.incomingMessages.collect { msg ->
             when (msg.type) {
                 MessageType.MIRROR_START -> {
+                    AirBridgeLog.info("[Mirror:$sessionId] MIRROR_START received → ACTIVE")
                     _stateFlow.value = MirrorState.ACTIVE
                 }
 
                 MessageType.MIRROR_STOP -> {
+                    AirBridgeLog.info("[Mirror:$sessionId] MIRROR_STOP received → STOPPED")
                     _stateFlow.value = MirrorState.STOPPED
                     receiveJob?.cancel()
                 }

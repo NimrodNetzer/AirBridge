@@ -4,6 +4,9 @@
     <!-- Keep CPU awake during active file transfers -->
     <uses-permission android:name="android.permission.WAKE_LOCK" />
 
+    <!-- Keep Wi-Fi radio active during an active session (prevents silent socket death) -->
+    <uses-permission android:name="android.permission.CHANGE_WIFI_STATE" />
+
     <!-- Network access -->
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
@@ -76,6 +79,16 @@
             android:theme="@android:style/Theme.NoTitleBar.Fullscreen"
             android:configChanges="orientation|screenSize|keyboardHidden"
             android:launchMode="singleTask" />
+
+        <!--
+          Persistent connection anchor: foreground service that holds WifiLock + WakeLock and
+          keeps the process alive while a device session is active. Tied to dataSync because
+          the app continuously transfers data (keepalives, mirror frames, file chunks).
+        -->
+        <service
+            android:name=".core.AirBridgeConnectionService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync" />
 
         <!--
           Phone as Floating Window: foreground service that holds the MediaProjection token,

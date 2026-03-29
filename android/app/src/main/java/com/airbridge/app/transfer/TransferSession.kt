@@ -1,5 +1,6 @@
 package com.airbridge.app.transfer
 
+import com.airbridge.app.core.AirBridgeLog
 import com.airbridge.app.core.interfaces.ITransferSession
 import com.airbridge.app.core.interfaces.TransferState
 import kotlinx.coroutines.CancellationException
@@ -83,15 +84,20 @@ class TransferSession(
             "Cannot start a session in state ${_stateFlow.value}."
         }
         _stateFlow.value = TransferState.ACTIVE
+        AirBridgeLog.info("[Transfer:$sessionId] $fileName PENDING → ACTIVE (role=${if (isSender) "sender" else "receiver"}, totalBytes=$totalBytes)")
 
         try {
             if (isSender) runSender() else runReceiver()
+            AirBridgeLog.info("[Transfer:$sessionId] $fileName ACTIVE → COMPLETED")
             _stateFlow.value = TransferState.COMPLETED
         } catch (e: CancellationException) {
-            if (_stateFlow.value != TransferState.PAUSED)
+            if (_stateFlow.value != TransferState.PAUSED) {
+                AirBridgeLog.info("[Transfer:$sessionId] $fileName → CANCELLED")
                 _stateFlow.value = TransferState.CANCELLED
+            }
             throw e
         } catch (e: Exception) {
+            AirBridgeLog.error("[Transfer:$sessionId] $fileName → FAILED", e)
             _stateFlow.value = TransferState.FAILED
             throw e
         }
