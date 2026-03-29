@@ -96,7 +96,8 @@ public sealed class MirrorServiceImpl : IMirrorService
     public Task<IMirrorSession> StartMirrorWithChannelAsync(
         IMessageChannel channel,
         MirrorMode mode,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        bool androidInitiated = false)
     {
         ArgumentNullException.ThrowIfNull(channel);
 
@@ -115,11 +116,12 @@ public sealed class MirrorServiceImpl : IMirrorService
             // Phone-window mode: Android is the source.
             // Windows receives H.264 frames, decodes them, and renders in a floating window.
             session = new MirrorSession(
-                sessionId:      sessionId,
-                channel:        channel,
-                decoderFactory: _decoderFactory,
-                windowFactory:  _windowFactory,
-                transferEngine: _transferEngine);
+                sessionId:        sessionId,
+                channel:          channel,
+                decoderFactory:   _decoderFactory,
+                windowFactory:    _windowFactory,
+                transferEngine:   _transferEngine,
+                androidInitiated: androidInitiated);
         }
 
         _sessions[sessionId] = session;

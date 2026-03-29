@@ -53,8 +53,9 @@ public sealed partial class MirrorViewModel : ObservableObject, IDisposable
         _registry      = registry;
         _dispatcher    = DispatcherQueue.GetForCurrentThread();
 
-        _connection.DeviceConnected    += OnDeviceConnected;
-        _connection.DeviceDisconnected += OnDeviceDisconnected;
+        _connection.DeviceConnected          += OnDeviceConnected;
+        _connection.DeviceDisconnected       += OnDeviceDisconnected;
+        _connection.AndroidMirrorStartRequested += OnAndroidMirrorStartRequested;
 
         // Reflect any session that was already active before this ViewModel was created.
         var existingId = _connection.ConnectedDeviceIds.FirstOrDefault();
@@ -63,6 +64,17 @@ public sealed partial class MirrorViewModel : ObservableObject, IDisposable
 
     private void OnDeviceConnected(object? sender, string deviceId)
         => _dispatcher.TryEnqueue(() => ActivateDevice(deviceId));
+
+    private void OnAndroidMirrorStartRequested(object? sender, string deviceId)
+        => _dispatcher.TryEnqueue(async () =>
+        {
+            // Ensure the device is activated in case DeviceConnected fired just before this.
+            if (_connectedDevice is null || _connectedDevice.DeviceId != deviceId)
+                ActivateDevice(deviceId);
+
+            if (IsMirroring) return; // already mirroring
+            await StartSessionAsync(MirrorMode.PhoneWindow, androidInitiated: true);
+        });
 
     private void OnDeviceDisconnected(object? sender, string deviceId)
     {
@@ -104,7 +116,7 @@ public sealed partial class MirrorViewModel : ObservableObject, IDisposable
 
     private bool CanStartSession() => IsConnected && !IsMirroring;
 
-    private async Task StartSessionAsync(MirrorMode mode)
+    private async Task StartSessionAsync(MirrorMode mode, bool androidInitiated = false)
     {
         if (_channel is null) return;
 
@@ -115,7 +127,7 @@ public sealed partial class MirrorViewModel : ObservableObject, IDisposable
             StatusMessage = "Connecting\u2026";
 
             _activeSession = await _mirrorService.StartMirrorWithChannelAsync(
-                _channel, mode, CancellationToken.None);
+                _channel, mode, CancellationToken.None, androidInitiated);
 
             _activeSession.StateChanged += OnSessionStateChanged;
 
@@ -192,8 +204,9 @@ public sealed partial class MirrorViewModel : ObservableObject, IDisposable
     /// <inheritdoc/>
     public void Dispose()
     {
-        _connection.DeviceConnected    -= OnDeviceConnected;
-        _connection.DeviceDisconnected -= OnDeviceDisconnected;
+        _connection.DeviceConnected             -= OnDeviceConnected;
+        _connection.DeviceDisconnected          -= OnDeviceDisconnected;
+        _connection.AndroidMirrorStartRequested -= OnAndroidMirrorStartRequested;
         UnregisterMirrorHandler();
         _activeSession?.Dispose();
     }

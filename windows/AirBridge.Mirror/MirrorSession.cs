@@ -32,6 +32,7 @@ public sealed class MirrorSession : IMirrorSession
     private readonly Func<IMirrorDecoder, IMirrorWindowHost>? _windowFactory;
     private readonly ITransferEngine?                         _transferEngine;
     private readonly IProgress<long>?                         _transferProgress;
+    private readonly bool                                     _androidInitiated;
 
     // ── Runtime state ──────────────────────────────────────────────────────
 
@@ -100,7 +101,8 @@ public sealed class MirrorSession : IMirrorSession
         Func<IMirrorDecoder>? decoderFactory = null,
         Func<IMirrorDecoder, IMirrorWindowHost>? windowFactory = null,
         ITransferEngine? transferEngine = null,
-        IProgress<long>? transferProgress = null)
+        IProgress<long>? transferProgress = null,
+        bool androidInitiated = false)
     {
         SessionId         = sessionId ?? throw new ArgumentNullException(nameof(sessionId));
         _channel          = channel   ?? throw new ArgumentNullException(nameof(channel));
@@ -109,6 +111,7 @@ public sealed class MirrorSession : IMirrorSession
         _windowFactory    = windowFactory;
         _transferEngine   = transferEngine;
         _transferProgress = transferProgress;
+        _androidInitiated = androidInitiated;
     }
 
     // ── IMirrorSession lifecycle ───────────────────────────────────────────
@@ -209,11 +212,20 @@ public sealed class MirrorSession : IMirrorSession
 
     private async Task HandleMirrorStartAsync(CancellationToken ct)
     {
-        // Announce the mirror session to Android
-        AirBridge.Core.AppLog.Info($"[Mirror:{SessionId}] Connecting → sending MirrorStart to Android");
-        await _channel.SendAsync(
-            new ProtocolMessage(MessageType.MirrorStart, Array.Empty<byte>()), ct)
-            .ConfigureAwait(false);
+        // Announce the mirror session to Android — only when Windows initiated.
+        // When Android initiated (user tapped mirror on phone), Android already knows it's
+        // mirroring so we must NOT echo MirrorStart back or it will confuse the protocol.
+        if (!_androidInitiated)
+        {
+            AirBridge.Core.AppLog.Info($"[Mirror:{SessionId}] Connecting → sending MirrorStart to Android");
+            await _channel.SendAsync(
+                new ProtocolMessage(MessageType.MirrorStart, Array.Empty<byte>()), ct)
+                .ConfigureAwait(false);
+        }
+        else
+        {
+            AirBridge.Core.AppLog.Info($"[Mirror:{SessionId}] Connecting → Android-initiated, skipping MirrorStart send");
+        }
 
         // Create decoder (headless-safe: decoder can exist without a window)
         if (_decoderFactory is not null)

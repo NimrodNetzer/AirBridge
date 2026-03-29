@@ -78,6 +78,14 @@ public sealed class DeviceConnectionService : IDisposable
     /// <summary>Raised with the device ID when an active session is closed or drops.</summary>
     public event EventHandler<string>? DeviceDisconnected;
 
+    /// <summary>
+    /// Raised when Android sends a <see cref="MessageType.MirrorStart"/> to Windows,
+    /// indicating that the user tapped "mirror" on the Android device.
+    /// The string argument is the device ID. Windows should start a mirror session in response
+    /// without sending <see cref="MessageType.MirrorStart"/> back to Android.
+    /// </summary>
+    public event EventHandler<string>? AndroidMirrorStartRequested;
+
     // ── Existing fields ─────────────────────────────────────────────────────
 
     /// <summary>PIN from a pending inbound pairing request, or null if none.</summary>
@@ -291,6 +299,12 @@ public sealed class DeviceConnectionService : IDisposable
                 }
 
                 AppLog.Info($"RX [{deviceId}] type={msg.Type} len={msg.Payload?.Length ?? 0}");
+
+                // Android-initiated mirror: raise event so MirrorViewModel can start a session.
+                // The MirrorStart is also forwarded to any registered handlers below so that
+                // if a session handler is already registered it can process it too.
+                if (msg.Type == MessageType.MirrorStart)
+                    AndroidMirrorStartRequested?.Invoke(this, deviceId);
 
                 // Dispatch to all registered handlers for this device.
                 if (_messageHandlers.TryGetValue(deviceId, out var handlers))
