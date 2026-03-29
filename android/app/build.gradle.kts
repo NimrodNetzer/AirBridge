@@ -58,8 +58,11 @@ android {
 
     // Use JUnit 5 for unit tests
     testOptions {
-        unitTests.all {
-            it.useJUnitPlatform()
+        unitTests {
+            isReturnDefaultValues = true  // stub android.util.Log in JVM unit tests
+            all {
+                it.useJUnitPlatform()
+            }
         }
     }
 }

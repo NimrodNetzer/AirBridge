@@ -55,7 +55,11 @@ import javax.net.ssl.SSLSocket
  */
 class TlsMessageChannel(
     private val socket: Socket,
-    override val remoteDeviceId: String
+    override val remoteDeviceId: String,
+    /** Override keepalive interval — useful in tests to avoid 30-second waits. */
+    private val keepaliveIntervalMs: Long = KEEPALIVE_INTERVAL_MS,
+    /** Override PONG timeout — useful in tests. */
+    private val pongTimeoutMs: Long = PONG_TIMEOUT_MS
 ) : IMessageChannel {
 
     private val _connected = AtomicBoolean(true)
@@ -192,7 +196,7 @@ class TlsMessageChannel(
     fun startKeepalive(scope: CoroutineScope) {
         scope.launch(Dispatchers.IO) {
             while (isActive && _connected.get()) {
-                delay(KEEPALIVE_INTERVAL_MS)
+                delay(keepaliveIntervalMs)
                 if (!_connected.get()) break
 
                 val pingTime = System.currentTimeMillis()
@@ -206,8 +210,8 @@ class TlsMessageChannel(
                 }
                 if (!sendOk) break
 
-                // Wait for PONG (poll at 250ms intervals up to PONG_TIMEOUT_MS)
-                val deadline = pingTime + PONG_TIMEOUT_MS
+                // Wait for PONG (poll at 250ms intervals up to pongTimeoutMs)
+                val deadline = pingTime + pongTimeoutMs
                 while (System.currentTimeMillis() < deadline) {
                     if (lastPongMs.get() >= pingTime) break
                     delay(250)
