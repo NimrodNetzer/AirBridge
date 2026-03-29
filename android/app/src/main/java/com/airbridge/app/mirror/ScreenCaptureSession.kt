@@ -6,6 +6,8 @@ import android.media.MediaCodec
 import android.media.MediaCodecInfo
 import android.media.MediaFormat
 import android.media.projection.MediaProjection
+import android.os.Handler
+import android.os.Looper
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -87,6 +89,16 @@ class ScreenCaptureSession(
         // Surface input: VirtualDisplay renders directly to the encoder surface
         val inputSurface = encoder.createInputSurface()
         encoder.start()
+
+        // Android 14+ (API 34) requires a callback to be registered before createVirtualDisplay()
+        // or IllegalStateException is thrown.  Register a no-op callback on the main looper.
+        projection.registerCallback(object : MediaProjection.Callback() {
+            override fun onStop() {
+                // MediaProjection was stopped externally (e.g. user revoked permission).
+                // Mirror the stop back into our own shutdown path.
+                if (isRunning) stop()
+            }
+        }, Handler(Looper.getMainLooper()))
 
         // Create VirtualDisplay feeding the encoder surface
         val vd = projection.createVirtualDisplay(
