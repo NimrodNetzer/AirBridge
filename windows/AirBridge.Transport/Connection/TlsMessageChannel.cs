@@ -130,13 +130,18 @@ public sealed class TlsMessageChannel : IMessageChannel
             }
             catch (Exception ex) when (IsNetworkException(ex))
             {
+                // On Windows, SslStream throws a SocketException (connection reset /
+                // forcibly closed) when the remote side closes without a TLS close_notify.
+                // Treat any network exception during the header read as a clean disconnect
+                // and return null — the same as a graceful 0-byte EOF.
+                _ = ex; // suppress unused-variable warning
                 SignalDisconnect();
-                throw;
+                return null;
             }
 
             if (bytesRead == 0)
             {
-                // Clean close from remote side
+                // Clean close from remote side (graceful TLS close_notify)
                 _connected = false;
                 return null;
             }
@@ -267,8 +272,10 @@ public sealed class TlsMessageChannel : IMessageChannel
     // ── Private helpers ────────────────────────────────────────────────────
 
     /// <summary>
-    /// Reads exactly <paramref name="buffer"/>.Length bytes from <paramref name="stream"/>,
-    /// returning 0 only if the very first read returns 0 (clean EOF).
+    /// Reads exactly <paramref name="buffer"/>.Length bytes from <paramref name="stream"/>.
+    /// Returns 0 if the very first read returns 0 (clean EOF before any bytes).
+    /// Throws <see cref="EndOfStreamException"/> if the stream closes after some bytes
+    /// have been read but before the buffer is full (mid-frame disconnect).
     /// </summary>
     private static async Task<int> ReadExactAsync(
         Stream stream,
@@ -281,7 +288,13 @@ public sealed class TlsMessageChannel : IMessageChannel
             int n = await stream.ReadAsync(buffer.AsMemory(offset, buffer.Length - offset), cancellationToken)
                                 .ConfigureAwait(false);
             if (n == 0)
-                return offset; // EOF
+            {
+                if (offset == 0)
+                    return 0; // clean EOF — no bytes read yet
+                // Mid-frame EOF: connection dropped after partial data
+                throw new EndOfStreamException(
+                    $"Connection closed after {offset} of {buffer.Length} expected bytes.");
+            }
             offset += n;
         }
         return offset;
@@ -297,5 +310,5 @@ public sealed class TlsMessageChannel : IMessageChannel
     }
 
     private static bool IsNetworkException(Exception ex) =>
-        ex is IOException or SocketException or ObjectDisposedException;
+        ex is IOException or SocketException or ObjectDisposedException or EndOfStreamException;
 }

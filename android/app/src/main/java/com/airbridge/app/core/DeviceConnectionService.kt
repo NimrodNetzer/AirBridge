@@ -15,6 +15,8 @@ import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.TimeoutCancellationException
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -22,6 +24,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeout
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CopyOnWriteArrayList
 import javax.inject.Inject
@@ -116,11 +119,53 @@ class DeviceConnectionService @Inject constructor(
     /**
      * Connects to an already-paired [device] without running the pairing handshake,
      * then registers the resulting channel as the active session.
+     *
+     * The TCP connect attempt is bounded by a 15-second timeout.
+     * On disconnect, retries with exponential back-off (base 2 s, max 30 s, up to 5 attempts).
+     * The listen side (server) never calls this — only the initiating (client) side reconnects.
      */
     suspend fun connectToPairedDevice(device: DeviceInfo) {
-        val channel = connectionManager.connect(device)
-        registerSession(device.deviceId, channel)
-        _establishedChannels.emit(channel)
+        val connectTimeoutMs = 15_000L
+        val maxAttempts      = 5
+        val backoffBase      = 2.0
+        val backoffMaxMs     = 30_000L
+
+        var attempt = 1
+        while (attempt <= maxAttempts) {
+            val channel = try {
+                withTimeout(connectTimeoutMs) {
+                    connectionManager.connect(device)
+                }
+            } catch (e: TimeoutCancellationException) {
+                if (attempt >= maxAttempts) throw e
+                val delayMs = minOf(
+                    (Math.pow(backoffBase, (attempt - 1).toDouble()) * 1000).toLong(),
+                    backoffMaxMs
+                )
+                delay(delayMs)
+                attempt++
+                continue
+            } catch (e: Exception) {
+                if (attempt >= maxAttempts) throw e
+                val delayMs = minOf(
+                    (Math.pow(backoffBase, (attempt - 1).toDouble()) * 1000).toLong(),
+                    backoffMaxMs
+                )
+                delay(delayMs)
+                attempt++
+                continue
+            }
+
+            // Connected — register session and wait for disconnect before retrying.
+            registerSession(device.deviceId, channel)
+            _establishedChannels.emit(channel)
+
+            // Block until this session ends, then loop back to reconnect.
+            channel.incomingMessages.collect { /* drain until flow completes */ }
+
+            // Reset attempt counter on a successful connection that later dropped.
+            attempt = 1
+        }
     }
 
     // ── Message dispatcher ────────────────────────────────────────────────
@@ -203,7 +248,7 @@ class DeviceConnectionService @Inject constructor(
                             val device = DeviceInfo(
                                 deviceId   = channel.remoteDeviceId,
                                 deviceName = channel.remoteDeviceId,
-                                deviceType = DeviceType.WINDOWS_PC,
+                                deviceType = DeviceType.UNKNOWN,
                                 ipAddress  = channel.remoteDeviceId,
                                 port       = 0,
                                 isPaired   = false,

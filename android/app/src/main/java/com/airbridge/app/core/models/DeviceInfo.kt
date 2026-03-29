@@ -2,6 +2,7 @@ package com.airbridge.app.core.models
 
 /** Device type classification — mirrors Windows enum. */
 enum class DeviceType {
+    UNKNOWN,
     WINDOWS_PC,
     ANDROID_PHONE,
     ANDROID_TABLET
