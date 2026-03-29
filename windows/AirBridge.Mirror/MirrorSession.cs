@@ -236,6 +236,7 @@ public sealed class MirrorSession : IMirrorSession
 
         _window?.Close();
         State = MirrorState.Stopped;
+        _cts?.Cancel(); // unblock RunInputSendLoopAsync so Task.WhenAll can complete
     }
 
     // ── Input send loop ────────────────────────────────────────────────────
