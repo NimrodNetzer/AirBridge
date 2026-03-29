@@ -296,11 +296,25 @@ public sealed class DeviceConnectionService : IDisposable
         }
         finally
         {
-            _activeSessions.TryRemove(new KeyValuePair<string, IMessageChannel>(deviceId, channel));
-            _messageHandlers.TryRemove(deviceId, out _);
+            // Only clean up and raise DeviceDisconnected if this channel is still the active
+            // session for the device. If RegisterSession() was called with a newer channel
+            // while this one was draining, TryRemove(KVP) returns false — we must not touch
+            // the new session's handlers or fire a spurious disconnect event.
+            var wasActive = _activeSessions.TryRemove(
+                new KeyValuePair<string, IMessageChannel>(deviceId, channel));
+
             _fileTransfer.ClearChannel(channel);
-            AppLog.Info($"Session closed: {deviceId}");
-            DeviceDisconnected?.Invoke(this, deviceId);
+
+            if (wasActive)
+            {
+                _messageHandlers.TryRemove(deviceId, out _);
+                AppLog.Info($"Session closed: {deviceId}");
+                DeviceDisconnected?.Invoke(this, deviceId);
+            }
+            else
+            {
+                AppLog.Info($"Session closed (superseded by newer channel): {deviceId}");
+            }
         }
     }
 

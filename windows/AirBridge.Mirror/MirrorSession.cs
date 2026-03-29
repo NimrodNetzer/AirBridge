@@ -113,6 +113,7 @@ public sealed class MirrorSession : IMirrorSession
         }
 
         _cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        AirBridge.Core.AppLog.Info($"[Mirror:{SessionId}] Connecting → starting receive + input-send loops");
 
         try
         {
@@ -124,10 +125,14 @@ public sealed class MirrorSession : IMirrorSession
         catch (OperationCanceledException)
         {
             if (State is not MirrorState.Stopped and not MirrorState.Error)
+            {
+                AirBridge.Core.AppLog.Info($"[Mirror:{SessionId}] Cancelled → Stopped");
                 State = MirrorState.Stopped;
+            }
         }
-        catch
+        catch (Exception ex)
         {
+            AirBridge.Core.AppLog.Error($"[Mirror:{SessionId}] Unhandled exception → Error", ex);
             State = MirrorState.Error;
             throw;
         }
@@ -177,6 +182,7 @@ public sealed class MirrorSession : IMirrorSession
     private async Task HandleMirrorStartAsync(CancellationToken ct)
     {
         // Announce the mirror session to Android
+        AirBridge.Core.AppLog.Info($"[Mirror:{SessionId}] Connecting → sending MirrorStart to Android");
         await _channel.SendAsync(
             new ProtocolMessage(MessageType.MirrorStart, Array.Empty<byte>()), ct)
             .ConfigureAwait(false);
@@ -204,22 +210,29 @@ public sealed class MirrorSession : IMirrorSession
             }
         }
 
+        AirBridge.Core.AppLog.Info($"[Mirror:{SessionId}] Connecting → Active (decoder={(  _decoder is not null ? "yes" : "headless")}, window={(_window is not null ? "yes" : "none")})");
         State = MirrorState.Active;
 
         // Message pump
         while (!ct.IsCancellationRequested)
         {
             var msg = await _channel.ReceiveAsync(ct).ConfigureAwait(false);
-            if (msg is null) break; // channel closed cleanly
+            if (msg is null)
+            {
+                AirBridge.Core.AppLog.Warn($"[Mirror:{SessionId}] Channel returned null — peer closed while Active");
+                break;
+            }
 
             switch (msg.Type)
             {
                 case MessageType.MirrorFrame:
+                    AirBridge.Core.AppLog.Debug($"[Mirror:{SessionId}] MirrorFrame payload={msg.Payload.Length}B");
                     if (_decoder is not null)
                         await _decoder.PushFrameAsync(msg.Payload, ct).ConfigureAwait(false);
                     break;
 
                 case MessageType.MirrorStop:
+                    AirBridge.Core.AppLog.Info($"[Mirror:{SessionId}] Active → Stopped (MirrorStop received)");
                     _window?.Close();
                     State = MirrorState.Stopped;
                     return;
@@ -234,6 +247,7 @@ public sealed class MirrorSession : IMirrorSession
             }
         }
 
+        AirBridge.Core.AppLog.Info($"[Mirror:{SessionId}] Message pump exited → Stopped");
         _window?.Close();
         State = MirrorState.Stopped;
         _cts?.Cancel(); // unblock RunInputSendLoopAsync so Task.WhenAll can complete

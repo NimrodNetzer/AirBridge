@@ -109,6 +109,7 @@ public sealed class TlsMessageChannel : IMessageChannel
         }
         catch (Exception ex) when (IsNetworkException(ex))
         {
+            AirBridge.Core.AppLog.Warn($"[{RemoteDeviceId}] Send failed (type={message.Type}) — {ex.GetType().Name}: {ex.Message}");
             SignalDisconnect();
             throw;
         }
@@ -145,7 +146,7 @@ public sealed class TlsMessageChannel : IMessageChannel
                 // forcibly closed) when the remote side closes without a TLS close_notify.
                 // Treat any network exception during the header read as a clean disconnect
                 // and return null — the same as a graceful 0-byte EOF.
-                _ = ex; // suppress unused-variable warning
+                AirBridge.Core.AppLog.Warn($"[{RemoteDeviceId}] Silent socket death detected during header read — {ex.GetType().Name}: {ex.Message}");
                 SignalDisconnect();
                 return null;
             }
@@ -153,6 +154,7 @@ public sealed class TlsMessageChannel : IMessageChannel
             if (bytesRead == 0)
             {
                 // Clean close from remote side (graceful TLS close_notify)
+                AirBridge.Core.AppLog.Info($"[{RemoteDeviceId}] Clean EOF — peer closed TLS connection gracefully");
                 _connected = false;
                 return null;
             }
@@ -171,12 +173,14 @@ public sealed class TlsMessageChannel : IMessageChannel
             }
             catch (Exception ex) when (IsNetworkException(ex))
             {
+                AirBridge.Core.AppLog.Warn($"[{RemoteDeviceId}] Silent socket death detected during body read (payloadLen={payloadLength}) — {ex.GetType().Name}: {ex.Message}");
                 SignalDisconnect();
                 throw;
             }
 
             if (bytesRead == 0)
             {
+                AirBridge.Core.AppLog.Info($"[{RemoteDeviceId}] Unexpected EOF mid-frame (payloadLen={payloadLength})");
                 _connected = false;
                 return null;
             }

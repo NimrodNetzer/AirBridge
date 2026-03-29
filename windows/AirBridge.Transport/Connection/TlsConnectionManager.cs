@@ -160,8 +160,10 @@ public sealed class TlsConnectionManager : IConnectionManager
         var tcpClient = new TcpClient();
         try
         {
+            AirBridge.Core.AppLog.Info($"[TlsConnMgr] Connecting → {remoteDevice.IpAddress}:{remoteDevice.Port} (device={remoteDevice.DeviceId})");
             await tcpClient.ConnectAsync(remoteDevice.IpAddress, remoteDevice.Port, cancellationToken)
                            .ConfigureAwait(false);
+            AirBridge.Core.AppLog.Info($"[TlsConnMgr] TCP connected → {remoteDevice.IpAddress}:{remoteDevice.Port}; starting TLS handshake");
 
             var sslStream = new SslStream(
                 tcpClient.GetStream(),
@@ -178,15 +180,18 @@ public sealed class TlsConnectionManager : IConnectionManager
 
             await sslStream.AuthenticateAsClientAsync(clientOptions, cancellationToken)
                            .ConfigureAwait(false);
+            AirBridge.Core.AppLog.Info($"[TlsConnMgr] TLS authenticated (client) → {remoteDevice.IpAddress}; performing HANDSHAKE exchange");
 
             var channel = new TlsMessageChannel(sslStream, remoteDevice.DeviceId);
             await PerformHandshakeAsync(channel, cancellationToken).ConfigureAwait(false);
+            AirBridge.Core.AppLog.Info($"[TlsConnMgr] HANDSHAKE complete; remote={channel.RemoteDeviceId}; starting keepalive");
             TrackChannel(channel);
             channel.StartKeepaliveAsync(cancellationToken);
             return channel;
         }
-        catch
+        catch (Exception ex)
         {
+            AirBridge.Core.AppLog.Error($"[TlsConnMgr] ConnectAsync failed → {remoteDevice.IpAddress}:{remoteDevice.Port}", ex);
             tcpClient.Dispose();
             throw;
         }
@@ -226,6 +231,8 @@ public sealed class TlsConnectionManager : IConnectionManager
 
     private async Task HandleIncomingAsync(TcpClient tcpClient, CancellationToken cancellationToken)
     {
+        var remoteEndpoint = tcpClient.Client.RemoteEndPoint?.ToString() ?? "unknown";
+        AirBridge.Core.AppLog.Info($"[TlsConnMgr] Inbound TCP from {remoteEndpoint}; starting TLS server handshake");
         try
         {
             var sslStream = new SslStream(
@@ -243,17 +250,18 @@ public sealed class TlsConnectionManager : IConnectionManager
 
             await sslStream.AuthenticateAsServerAsync(serverOptions, cancellationToken)
                            .ConfigureAwait(false);
+            AirBridge.Core.AppLog.Info($"[TlsConnMgr] TLS authenticated (server) ← {remoteEndpoint}; performing HANDSHAKE exchange");
 
-            // Use IP as placeholder until HANDSHAKE reveals the stable device ID
-            var remoteEndpoint = tcpClient.Client.RemoteEndPoint?.ToString() ?? "unknown";
             var channel = new TlsMessageChannel(sslStream, remoteEndpoint);
             await PerformHandshakeAsync(channel, cancellationToken).ConfigureAwait(false);
+            AirBridge.Core.AppLog.Info($"[TlsConnMgr] HANDSHAKE complete; remote={channel.RemoteDeviceId}; starting keepalive");
             TrackChannel(channel);
             channel.StartKeepaliveAsync(cancellationToken);
             ConnectionReceived?.Invoke(this, channel);
         }
-        catch
+        catch (Exception ex)
         {
+            AirBridge.Core.AppLog.Error($"[TlsConnMgr] HandleIncomingAsync failed ← {remoteEndpoint}", ex);
             tcpClient.Dispose();
         }
     }

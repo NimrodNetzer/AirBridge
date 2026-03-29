@@ -133,6 +133,7 @@ public sealed class TransferSession : ITransferSession
                 throw new InvalidOperationException($"Cannot start a session in state {_state}.");
             _state = TransferState.Active;
         }
+        AirBridge.Core.AppLog.Info($"[Transfer:{SessionId}] {FileName} Pending → Active (role={(IsSender ? "sender" : "receiver")}, totalBytes={TotalBytes})");
         StateChanged?.Invoke(this, TransferState.Active);
 
         _pauseCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
@@ -145,16 +146,21 @@ public sealed class TransferSession : ITransferSession
                 await RunReceiverAsync(_pauseCts.Token).ConfigureAwait(false);
 
             if (State == TransferState.Active)
+            {
+                AirBridge.Core.AppLog.Info($"[Transfer:{SessionId}] {FileName} Active → Completed");
                 State = TransferState.Completed;
+            }
         }
         catch (OperationCanceledException)
         {
             if (State == TransferState.Paused)
                 return; // caller will resume
+            AirBridge.Core.AppLog.Info($"[Transfer:{SessionId}] {FileName} → Cancelled");
             State = TransferState.Cancelled;
         }
-        catch (Exception)
+        catch (Exception ex)
         {
+            AirBridge.Core.AppLog.Error($"[Transfer:{SessionId}] {FileName} → Failed", ex);
             State = TransferState.Failed;
             throw;
         }
@@ -168,6 +174,7 @@ public sealed class TransferSession : ITransferSession
             if (_state != TransferState.Active) return Task.CompletedTask;
             _state = TransferState.Paused;
         }
+        AirBridge.Core.AppLog.Info($"[Transfer:{SessionId}] {FileName} Active → Paused (at {TransferredBytes}/{TotalBytes} bytes)");
         StateChanged?.Invoke(this, TransferState.Paused);
         _pauseCts?.Cancel();
         return Task.CompletedTask;

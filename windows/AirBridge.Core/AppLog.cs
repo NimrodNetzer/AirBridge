@@ -29,6 +29,9 @@ public static class AppLog
         Write("INFO", "===== AirBridge session started =====");
     }
 
+    /// <summary>Writes a DEBUG-level entry.</summary>
+    public static void Debug(string message) => Write("DEBUG", message);
+
     /// <summary>Writes an INFO-level entry.</summary>
     public static void Info(string message)  => Write("INFO ", message);
 
