@@ -2,11 +2,12 @@
 <Page x:Class="AirBridge.App.Pages.DevicesPage"
       xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
       xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-      xmlns:models="using:AirBridge.Core.Models"
+      xmlns:vm="using:AirBridge.App.ViewModels"
       Background="Transparent">
 
-    <Grid Margin="24,16" RowSpacing="16">
+    <Grid Margin="24,16" RowSpacing="12">
         <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="*"/>
@@ -44,8 +45,23 @@
                  Severity="Informational"
                  Message="{x:Bind ViewModel.StatusMessage, Mode=OneWay}"/>
 
+        <!-- Error banner (scan/connection failure) -->
+        <InfoBar Grid.Row="2"
+                 IsOpen="{x:Bind ViewModel.HasError, Mode=OneWay}"
+                 IsClosable="True"
+                 Severity="Error"
+                 Title="Connection Error"
+                 Message="{x:Bind ViewModel.ErrorMessage, Mode=OneWay}"
+                 CloseButtonClick="DeviceErrorBar_CloseButtonClick">
+            <InfoBar.ActionButton>
+                <Button Content="Retry"
+                        Style="{StaticResource AccentButtonStyle}"
+                        Command="{x:Bind ViewModel.ToggleScanCommand}"/>
+            </InfoBar.ActionButton>
+        </InfoBar>
+
         <!-- Device list -->
-        <ListView Grid.Row="2"
+        <ListView Grid.Row="3"
                   ItemsSource="{x:Bind ViewModel.Devices}"
                   SelectionMode="None"
                   ScrollViewer.VerticalScrollBarVisibility="Auto">
@@ -57,7 +73,7 @@
                 </Style>
             </ListView.ItemContainerStyle>
             <ListView.ItemTemplate>
-                <DataTemplate x:DataType="models:DeviceInfo">
+                <DataTemplate x:DataType="vm:DeviceItemViewModel">
                     <Border Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
                             BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
                             BorderThickness="1"
@@ -78,7 +94,7 @@
                                       Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}"
                                       VerticalAlignment="Center"/>
 
-                            <!-- Device info -->
+                            <!-- Device info + reconnecting indicator -->
                             <StackPanel Grid.Column="1" VerticalAlignment="Center" Spacing="2">
                                 <TextBlock Text="{x:Bind DeviceName}"
                                            Style="{StaticResource BodyStrongTextBlockStyle}"/>
@@ -88,6 +104,17 @@
                                     <Run Text=":"/>
                                     <Run Text="{x:Bind Port}"/>
                                 </TextBlock>
+
+                                <!-- Reconnecting row — visible only when reconnecting -->
+                                <StackPanel Orientation="Horizontal"
+                                            Spacing="6"
+                                            Visibility="{x:Bind IsReconnecting, Mode=OneWay, Converter={StaticResource BoolToVisibility}}">
+                                    <ProgressRing Width="14" Height="14" IsActive="True"/>
+                                    <TextBlock Text="Reconnecting&#x2026;"
+                                               Style="{StaticResource CaptionTextBlockStyle}"
+                                               Foreground="{ThemeResource SystemFillColorCautionBrush}"
+                                               VerticalAlignment="Center"/>
+                                </StackPanel>
                             </StackPanel>
 
                             <!-- Connect / Paired button -->
@@ -98,7 +125,7 @@
                                 <Button Content="Connect"
                                         Style="{StaticResource AccentButtonStyle}"
                                         Visibility="{x:Bind IsPaired, Converter={StaticResource BoolToVisibilityNegated}}"
-                                        Tag="{x:Bind}"
+                                        Tag="{x:Bind Device}"
                                         Click="ConnectButton_Click"/>
                             </StackPanel>
                         </Grid>
@@ -108,7 +135,7 @@
         </ListView>
 
         <!-- Bottom status bar -->
-        <TextBlock Grid.Row="3"
+        <TextBlock Grid.Row="4"
                    Foreground="{ThemeResource TextFillColorSecondaryBrush}"
                    Style="{StaticResource CaptionTextBlockStyle}">
             <Run Text="{x:Bind ViewModel.Devices.Count, Mode=OneWay}"/>

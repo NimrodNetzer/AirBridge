@@ -234,18 +234,20 @@ public class TlsMessageChannelIntegrationTests : IAsyncLifetime
         client.Disconnected += (_, _) => disconnectTcs.TrySetResult(true);
 
         using var keepaliveCts = new CancellationTokenSource();
-        _ = client.StartKeepaliveAsync(keepaliveCts.Token);
+        var keepaliveTask = client.StartKeepaliveAsync(keepaliveCts.Token);
 
         // The channel should detect the dead connection within keepalive interval + pong timeout
         // (~40 s in production).  For CI we allow 50 s.
-        var disconnected = await Task.WhenAny(
+        await Task.WhenAny(
             disconnectTcs.Task,
             Task.Delay(TimeSpan.FromSeconds(50), cts.Token));
 
         Assert.True(disconnectTcs.Task.IsCompleted, "Channel should have closed after PONG timeout.");
         Assert.False(client.IsConnected);
 
+        // Cancel the keepalive loop and await the task so no dangling thread outlives the test.
         keepaliveCts.Cancel();
+        try { await keepaliveTask; } catch (OperationCanceledException) { }
         await client.DisposeAsync();
     }
 

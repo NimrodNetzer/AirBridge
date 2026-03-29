@@ -68,6 +68,9 @@ public sealed class DeviceConnectionService : IDisposable
     /// <summary>Raised with the device ID when an active session is closed or drops.</summary>
     public event EventHandler<string>? DeviceDisconnected;
 
+    /// <summary>Raised with the device ID when an automatic reconnect attempt begins.</summary>
+    public event EventHandler<string>? DeviceReconnecting;
+
     // ── Existing fields ─────────────────────────────────────────────────────
 
     /// <summary>PIN from a pending inbound pairing request, or null if none.</summary>
@@ -214,10 +217,12 @@ public sealed class DeviceConnectionService : IDisposable
             }
 
             // Session dropped — retry from attempt 1 (reset loop).
+            DeviceReconnecting?.Invoke(this, device.DeviceId);
             attempt = 0; // loop increment will make it 1
             continue;
 
             Backoff:
+            DeviceReconnecting?.Invoke(this, device.DeviceId);
             var delayMs = (int)Math.Min(
                 Math.Pow(BackoffBase, attempt - 1) * 1000,
                 BackoffMaxMs);
