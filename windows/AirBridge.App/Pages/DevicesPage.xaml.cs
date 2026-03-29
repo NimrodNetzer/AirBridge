@@ -31,4 +31,7 @@ public sealed partial class DevicesPage : Page
             await dialog.ShowAsync();
         }
     }
+
+    private void DeviceErrorBar_CloseButtonClick(InfoBar sender, object args)
+        => ViewModel.DismissErrorCommand.Execute(null);
 }
