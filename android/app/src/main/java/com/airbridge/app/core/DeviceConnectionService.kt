@@ -31,6 +31,19 @@ import javax.inject.Inject
 import javax.inject.Singleton
 
 /**
+ * Represents the reconnect state for a device that is currently being re-connected to.
+ *
+ * @property deviceId  The device being reconnected.
+ * @property attempt   The current attempt number (1-based).
+ * @property maxAttempts Total number of attempts allowed.
+ */
+data class ReconnectState(
+    val deviceId: String,
+    val attempt: Int,
+    val maxAttempts: Int,
+)
+
+/**
  * Represents an inbound pairing request received from a remote (typically Windows) device.
  *
  * @param device    Synthetic [DeviceInfo] built from the connection's remote address.
@@ -104,6 +117,20 @@ class DeviceConnectionService @Inject constructor(
     // ── Lifecycle ─────────────────────────────────────────────────────────
 
     /**
+     * Non-null while an outbound reconnect is in progress; null when connected or idle.
+     * The UI can observe this to show a "Reconnecting…" indicator.
+     */
+    private val _reconnectState = MutableStateFlow<ReconnectState?>(null)
+    val reconnectState: StateFlow<ReconnectState?> = _reconnectState.asStateFlow()
+
+    /**
+     * Emits the device ID of a connection that failed all reconnect attempts.
+     * The UI can observe this to show a "Connection failed" error with a Retry button.
+     */
+    private val _connectionFailedEvent = MutableSharedFlow<String>()
+    val connectionFailedEvent: SharedFlow<String> = _connectionFailedEvent.asSharedFlow()
+
+    /**
      * Starts listening for inbound TLS connections and routing them.
      * Idempotent — safe to call multiple times.
      */
@@ -132,12 +159,21 @@ class DeviceConnectionService @Inject constructor(
 
         var attempt = 1
         while (attempt <= maxAttempts) {
+            // Emit reconnect state so the UI can show a "Reconnecting…" banner.
+            // On the very first attempt (attempt == 1) this signals the initial connect;
+            // on subsequent attempts it signals a true reconnect after a drop.
+            _reconnectState.value = ReconnectState(device.deviceId, attempt, maxAttempts)
+
             val channel = try {
                 withTimeout(connectTimeoutMs) {
                     connectionManager.connect(device)
                 }
             } catch (e: TimeoutCancellationException) {
-                if (attempt >= maxAttempts) throw e
+                if (attempt >= maxAttempts) {
+                    _reconnectState.value = null
+                    _connectionFailedEvent.emit(device.deviceId)
+                    throw e
+                }
                 val delayMs = minOf(
                     (Math.pow(backoffBase, (attempt - 1).toDouble()) * 1000).toLong(),
                     backoffMaxMs
@@ -146,7 +182,11 @@ class DeviceConnectionService @Inject constructor(
                 attempt++
                 continue
             } catch (e: Exception) {
-                if (attempt >= maxAttempts) throw e
+                if (attempt >= maxAttempts) {
+                    _reconnectState.value = null
+                    _connectionFailedEvent.emit(device.deviceId)
+                    throw e
+                }
                 val delayMs = minOf(
                     (Math.pow(backoffBase, (attempt - 1).toDouble()) * 1000).toLong(),
                     backoffMaxMs
@@ -156,7 +196,8 @@ class DeviceConnectionService @Inject constructor(
                 continue
             }
 
-            // Connected — register session and wait for disconnect before retrying.
+            // Connected — clear reconnect indicator and register session.
+            _reconnectState.value = null
             registerSession(device.deviceId, channel)
             _establishedChannels.emit(channel)
 
