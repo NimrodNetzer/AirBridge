@@ -244,8 +244,63 @@ Each major feature module is implemented by a dedicated agent on its own branch.
 - [x] Iteration 6 — Mirror Full (input relay, drag-and-drop, IddCx tablet display) — merged to `dev`
 - [ ] Iteration 7 — Polish + release
 
-**Git state:** only `dev` and `main` branches exist. `dev` is 19 commits ahead of `main`.
-`main` will be updated at the Iteration 7 milestone release.
+**Git state:** active work branch is `feature/android-transport-tests`.
+`dev` and `main` exist. `main` will be updated at the Iteration 7 milestone release.
+
+### What is confirmed working (live-tested 2026-03-29)
+- File transfer both directions (Windows↔Android), hash verified, ~5MB in <1s ✓
+- TLS connection stable, PING/PONG keepalive at 200-300ms RTT ✓
+- Infinite reconnect loop with exponential backoff (2s→60s) ✓
+- WakeLock + WifiLock + Foreground Service on Android ✓
+- Black-box file logging both sides (`%TEMP%\AirBridge\airbridge.log` / Android `filesDir/airbridge.log`) ✓
+
+### What is not yet working
+- **Phone as Floating Window (mirror)**: session negotiates (Connecting→Active) but mirror frames never render — next test needed after latest mirror fix
+- **Tablet as Second Monitor**: not yet tested end-to-end
+- **Input relay** (mouse/keyboard → Android): not yet tested
+
+### Recent bug fixes (branch `feature/android-transport-tests`, not yet merged to `dev`)
+All fixes are committed and verified to compile. Require rebuild + retest:
+
+1. `fix(stability)` — ObjectDisposedException on SendAsync race; double session registration; HANDSHAKE diagnostic logging; duplicate Android log entries
+2. `fix(mirror)` — concurrent SslStream read crash (NotSupportedException): MirrorSession now receives via internal Channel<ProtocolMessage> fed by DeviceConnectionService dispatch, not by reading the channel directly
+3. `fix(mirror)` — ghost keepalive loops: TlsMessageChannel.DisposeAsync now cancels the keepalive CancellationTokenSource immediately
+
+### Known remaining issues
+- **COMException on progress bar** (intermittent): ProgressChanged callback triggers WinUI binding on wrong thread in some sessions. Needs one more investigation session.
+- **Tablet display**: not tested; shares transport with mirror so mirror fix may unblock it.
+
+---
+
+## Live Debugging Workflow
+
+This is the standard approach for diagnosing bugs using real-device sessions. Use the `/monitor-logs` skill (saved in project settings) to automate steps 1–4.
+
+### Log locations
+| Side | Location | Notes |
+|------|----------|-------|
+| Windows | `%TEMP%\AirBridge\airbridge.log` | Rotates at 500KB. File is held open by the app — use `Get-Content -Wait` to stream. |
+| Android | `adb logcat` filtered to AirBridge tags | Tags: `AirBridge/ConnSvc:D AirBridge/Transfer:D AirBridge/Channel:D AndroidRuntime:E *:S` |
+
+### adb path
+`C:\Users\nimro\AppData\Local\Android\Sdk\platform-tools\adb.exe` — invoke via `powershell.exe -Command "& 'path' ..."` (bash cannot use backslash paths directly).
+
+### Session procedure
+1. Clear Android logcat: `adb logcat -c`
+2. Windows log: the app holds it open — do NOT try to delete/truncate; just note the timestamp and read new lines after the test.
+3. Start Android stream in background: `adb logcat AirBridge/ConnSvc:D AirBridge/Transfer:D AirBridge/Channel:D AndroidRuntime:E *:S`
+4. Start Windows stream in background: `Get-Content 'C:\Users\nimro\AppData\Local\Temp\AirBridge\airbridge.log' -Wait`
+5. Tell user: "Monitoring active — Android stream ID: X, Windows stream ID: Y. Do your test."
+6. After test: read both outputs with `Select-Object -First N` / `-Last N` (files can exceed 10k token limit).
+7. Analyse: session registration on both sides, chunk flow, any exception, last good line, root cause.
+
+### What to look for
+- `NotSupportedException: another read operation is pending` → concurrent SslStream reads (architectural)
+- `ObjectDisposedException: SemaphoreSlim` → SendAsync race with session disposal
+- `PONG timeout` without a preceding `PING sent` → ghost keepalive on a dead channel
+- `Non-pairing first message` from a known device → IsPaired returning false (check HANDSHAKE payload log)
+- `COMException` in WinUI → UI element updated from a non-UI thread (needs `DispatcherQueue.TryEnqueue`)
+- Double session registration (same device ID registered twice < 30s apart) → race between inbound + outbound connect
 
 ---
 
