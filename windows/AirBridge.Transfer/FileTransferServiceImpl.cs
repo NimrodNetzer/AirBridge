@@ -68,6 +68,14 @@ public sealed class FileTransferServiceImpl : IFileTransferService, IDisposable
     /// </summary>
     public void SetChannel(IMessageChannel? channel) => _channel = channel;
 
+    /// <summary>
+    /// Clears the active channel only if it is still <paramref name="expected"/>.
+    /// Safe to call from a disconnected session's finally block — will not
+    /// wipe out a new channel that was registered by a concurrent reconnect.
+    /// </summary>
+    public void ClearChannel(IMessageChannel expected) =>
+        Interlocked.CompareExchange(ref _channel, null, expected);
+
     // ── IFileTransferService ───────────────────────────────────────────────
 
     /// <inheritdoc/>

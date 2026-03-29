@@ -298,7 +298,7 @@ public sealed class DeviceConnectionService : IDisposable
         {
             _activeSessions.TryRemove(new KeyValuePair<string, IMessageChannel>(deviceId, channel));
             _messageHandlers.TryRemove(deviceId, out _);
-            _fileTransfer.SetChannel(null);
+            _fileTransfer.ClearChannel(channel);
             AppLog.Info($"Session closed: {deviceId}");
             DeviceDisconnected?.Invoke(this, deviceId);
         }

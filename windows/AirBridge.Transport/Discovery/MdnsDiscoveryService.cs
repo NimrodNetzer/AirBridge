@@ -241,23 +241,25 @@ public sealed class MdnsDiscoveryService : IDiscoveryService
                 ni.OperationalStatus == OperationalStatus.Up &&
                 ni.NetworkInterfaceType != NetworkInterfaceType.Loopback &&
                 ni.NetworkInterfaceType != NetworkInterfaceType.Tunnel)
-            .SelectMany(ni => ni.GetIPProperties().UnicastAddresses)
-            .Where(a =>
-                a.Address.AddressFamily == AddressFamily.InterNetwork &&
-                !System.Net.IPAddress.IsLoopback(a.Address))
-            .Select(a => a.Address)
+            .SelectMany(ni => ni.GetIPProperties().UnicastAddresses
+                .Where(a =>
+                    a.Address.AddressFamily == AddressFamily.InterNetwork &&
+                    !System.Net.IPAddress.IsLoopback(a.Address))
+                .Select(a => (Address: a.Address, IsWifi: ni.NetworkInterfaceType == NetworkInterfaceType.Wireless80211)))
             .ToList();
 
         return candidates
-            .OrderBy(ip =>
+            .OrderBy(c =>
             {
-                var b = ip.GetAddressBytes();
-                if (b[0] == 192 && b[1] == 168) return 0;
-                if (b[0] == 10)                  return 1;
-                if (b[0] == 172 && b[1] >= 16 && b[1] <= 31) return 2;
-                return 3;
+                // Wi-Fi gets the highest priority — always prefer wireless over wired
+                if (c.IsWifi) return 0;
+                var b = c.Address.GetAddressBytes();
+                if (b[0] == 192 && b[1] == 168) return 1;
+                if (b[0] == 10)                  return 2;
+                if (b[0] == 172 && b[1] >= 16 && b[1] <= 31) return 3;
+                return 4;
             })
-            .FirstOrDefault()?.ToString() ?? string.Empty;
+            .FirstOrDefault().Address?.ToString() ?? string.Empty;
     }
 
     private void TearDown()
