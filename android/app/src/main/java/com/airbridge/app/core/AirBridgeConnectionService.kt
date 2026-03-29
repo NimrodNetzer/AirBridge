@@ -10,8 +10,14 @@ import android.content.Intent
 import android.os.Build
 import android.os.IBinder
 import androidx.core.app.NotificationCompat
+import com.airbridge.app.mirror.MirrorRequestActivity
 import com.airbridge.app.ui.MainActivity
 import dagger.hilt.android.AndroidEntryPoint
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
 import javax.inject.Inject
 
 /**
@@ -40,6 +46,8 @@ class AirBridgeConnectionService : Service() {
 
     @Inject lateinit var deviceConnectionService: DeviceConnectionService
 
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
     companion object {
         private const val CHANNEL_ID = "airbridge_connection"
         private const val NOTIF_ID   = 1001
@@ -67,6 +75,20 @@ class AirBridgeConnectionService : Service() {
         super.onCreate()
         createNotificationChannel()
         deviceConnectionService.startNetworkMonitoring()
+
+        // React to MIRROR_START requests from Windows: launch MirrorRequestActivity
+        // which shows the MediaProjection permission dialog and starts PhoneCaptureService.
+        scope.launch {
+            deviceConnectionService.mirrorStartRequests.collect { req ->
+                AirBridgeLog.info("[FgService] Mirror requested by Windows for device=${req.deviceId} — launching permission dialog")
+                val intent = MirrorRequestActivity.buildIntent(
+                    context  = this@AirBridgeConnectionService,
+                    deviceId = req.deviceId,
+                )
+                startActivity(intent)
+            }
+        }
+
         AirBridgeLog.info("[FgService] Created — network monitoring started")
     }
 
@@ -83,6 +105,7 @@ class AirBridgeConnectionService : Service() {
     }
 
     override fun onDestroy() {
+        scope.cancel()
         deviceConnectionService.stopNetworkMonitoring()
         AirBridgeLog.info("[FgService] Destroyed — network monitoring stopped")
         super.onDestroy()

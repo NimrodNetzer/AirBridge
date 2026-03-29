@@ -106,24 +106,31 @@ class MirrorSession(
             it.screenHeight = height
         }
 
-        // Launch input relay coroutine (if injector present)
-        if (inputInjector != null) {
-            inputReceiveJob = coroutineScope.launch {
-                try { runInputReceiveLoop() } catch (_: CancellationException) { }
+        // When captureSession is present this session is the *sender* — DeviceConnectionService
+        // already owns the sole read loop on channel.incomingMessages.  Launching additional
+        // collect() calls here would compete for bytes on the DataInputStream, corrupting the
+        // framing and breaking the keepalive.  Skip the receive loops; message handling for
+        // MIRROR_STOP / INPUT_EVENT will be wired via DeviceConnectionService.addMessageHandler
+        // in a future iteration when input relay is tested end-to-end.
+        if (captureSession == null) {
+            // Receiver mode (no capture source): handle incoming control messages directly.
+            if (inputInjector != null) {
+                inputReceiveJob = coroutineScope.launch {
+                    try { runInputReceiveLoop() } catch (_: CancellationException) { }
+                }
             }
-        }
 
-        // Launch main receive loop
-        receiveJob = coroutineScope.launch {
-            try {
-                runReceiveLoop()
-            } catch (e: CancellationException) {
-                AirBridgeLog.info("[Mirror:$sessionId] Receive loop cancelled → STOPPED")
-                _stateFlow.value = MirrorState.STOPPED
-                throw e
-            } catch (e: Exception) {
-                AirBridgeLog.error("[Mirror:$sessionId] Receive loop exception → ERROR", e)
-                _stateFlow.value = MirrorState.ERROR
+            receiveJob = coroutineScope.launch {
+                try {
+                    runReceiveLoop()
+                } catch (e: CancellationException) {
+                    AirBridgeLog.info("[Mirror:$sessionId] Receive loop cancelled → STOPPED")
+                    _stateFlow.value = MirrorState.STOPPED
+                    throw e
+                } catch (e: Exception) {
+                    AirBridgeLog.error("[Mirror:$sessionId] Receive loop exception → ERROR", e)
+                    _stateFlow.value = MirrorState.ERROR
+                }
             }
         }
 

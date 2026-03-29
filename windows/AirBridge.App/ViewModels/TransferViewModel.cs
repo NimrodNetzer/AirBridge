@@ -118,8 +118,14 @@ public sealed partial class TransferViewModel : ObservableObject
 
             session.ProgressChanged += (_, bytes) => _dispatcher?.TryEnqueue(() =>
             {
-                item.Progress = info.Length > 0 ? bytes / (double)info.Length : 1.0;
-                item.Status   = $"{bytes / 1024} KB / {info.Length / 1024} KB";
+                try
+                {
+                    item.Progress = info.Length > 0
+                        ? Math.Clamp(bytes / (double)info.Length, 0.0, 1.0)
+                        : 1.0;
+                    item.Status = $"{bytes / 1024} KB / {info.Length / 1024} KB";
+                }
+                catch { /* suppress COMException if UI element is disposed during navigation */ }
             });
             session.StateChanged += (_, state) => _dispatcher?.TryEnqueue(() =>
             {

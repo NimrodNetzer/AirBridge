@@ -71,6 +71,17 @@
                 android:resource="@xml/accessibility_service_config" />
         </service>
 
+        <!--
+          Transparent trampoline activity that shows the MediaProjection permission dialog
+          when the Windows host requests a phone-mirror session (MIRROR_START message).
+          Launched by AirBridgeConnectionService; starts PhoneCaptureService on grant.
+        -->
+        <activity
+            android:name=".mirror.MirrorRequestActivity"
+            android:exported="false"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar"
+            android:launchMode="singleTask" />
+
         <!-- Tablet as Second Monitor: full-screen H.264 renderer (Windows → Android) -->
         <activity
             android:name=".display.TabletDisplayActivity"

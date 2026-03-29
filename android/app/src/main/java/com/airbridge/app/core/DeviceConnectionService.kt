@@ -37,6 +37,13 @@ import javax.inject.Inject
 import javax.inject.Singleton
 
 /**
+ * Emitted by [DeviceConnectionService.mirrorStartRequests] when the Windows host sends a
+ * [MessageType.MIRROR_START] message.  The receiver should start [com.airbridge.app.mirror.PhoneCaptureService]
+ * after obtaining a MediaProjection token from the user.
+ */
+data class MirrorStartRequest(val deviceId: String)
+
+/**
  * Represents an inbound pairing request received from a remote (typically Windows) device.
  *
  * @param device    Synthetic [DeviceInfo] built from the connection's remote address.
@@ -149,6 +156,15 @@ class DeviceConnectionService @Inject constructor(
     /** Emits channels for already-paired connections (non-pairing first messages). */
     private val _establishedChannels = MutableSharedFlow<IMessageChannel>()
     val establishedChannels: SharedFlow<IMessageChannel> = _establishedChannels.asSharedFlow()
+
+    /**
+     * Emits a [MirrorStartRequest] when the Windows host sends a [MessageType.MIRROR_START]
+     * message on any active session. The foreground service ([AirBridgeConnectionService])
+     * collects this and launches [com.airbridge.app.mirror.MirrorRequestActivity] to present
+     * the MediaProjection permission dialog and start [com.airbridge.app.mirror.PhoneCaptureService].
+     */
+    private val _mirrorStartRequests = MutableSharedFlow<MirrorStartRequest>(extraBufferCapacity = 1)
+    val mirrorStartRequests: SharedFlow<MirrorStartRequest> = _mirrorStartRequests.asSharedFlow()
 
     /** Tracks the result of the most-recent inbound pairing attempt for the UI. */
     private val _lastInboundPairingResult = MutableStateFlow<PairingResult?>(null)
@@ -370,6 +386,14 @@ class DeviceConnectionService @Inject constructor(
     private suspend fun dispatchMessage(deviceId: String, message: ProtocolMessage) {
         // Note: TlsMessageChannel already logs every received message at DEBUG level.
         // No duplicate log here to avoid doubling the output during file transfers.
+
+        // When Windows requests a mirror session, emit to the dedicated flow so
+        // AirBridgeConnectionService can start the MediaProjection permission flow.
+        if (message.type == MessageType.MIRROR_START) {
+            AirBridgeLog.info("[ConnSvc] [$deviceId] MIRROR_START received from Windows — emitting mirror request")
+            _mirrorStartRequests.tryEmit(MirrorStartRequest(deviceId))
+        }
+
         val handlers = _messageHandlers[deviceId] ?: return
         for (handler in handlers) {
             try {
