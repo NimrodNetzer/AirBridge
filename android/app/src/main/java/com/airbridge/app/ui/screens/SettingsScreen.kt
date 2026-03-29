@@ -182,6 +182,7 @@ private fun PairedDeviceRow(device: DeviceInfo, onForget: () -> Unit) {
                 DeviceType.WINDOWS_PC -> Icons.Default.Computer
                 DeviceType.ANDROID_PHONE -> Icons.Default.PhoneAndroid
                 DeviceType.ANDROID_TABLET -> Icons.Default.Tablet
+                else -> Icons.Default.Computer
             },
             contentDescription = null,
             tint = MaterialTheme.colorScheme.onSurfaceVariant,

@@ -249,4 +249,5 @@ private fun DeviceType.toIcon(): ImageVector = when (this) {
     DeviceType.WINDOWS_PC -> Icons.Default.Computer
     DeviceType.ANDROID_PHONE -> Icons.Default.PhoneAndroid
     DeviceType.ANDROID_TABLET -> Icons.Default.Tablet
+    else -> Icons.Default.Cast
 }

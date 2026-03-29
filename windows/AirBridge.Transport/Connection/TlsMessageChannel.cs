@@ -32,8 +32,11 @@ public sealed class TlsMessageChannel : IMessageChannel
     private bool _disposed;
 
     // ── Keepalive state ────────────────────────────────────────────────────
-    private static readonly TimeSpan KeepaliveInterval = TimeSpan.FromSeconds(30);
-    private static readonly TimeSpan PongTimeout       = TimeSpan.FromSeconds(10);
+    private static readonly TimeSpan DefaultKeepaliveInterval = TimeSpan.FromSeconds(30);
+    private static readonly TimeSpan DefaultPongTimeout       = TimeSpan.FromSeconds(10);
+
+    private readonly TimeSpan _keepaliveInterval;
+    private readonly TimeSpan _pongTimeout;
 
     /// <summary>
     /// UTC timestamp of the last PONG received from the peer.
@@ -63,10 +66,18 @@ public sealed class TlsMessageChannel : IMessageChannel
     /// Identifier of the remote peer (filled from the Handshake message in higher layers;
     /// may be a placeholder until the handshake completes).
     /// </param>
-    public TlsMessageChannel(SslStream stream, string remoteDeviceId)
+    /// <param name="keepaliveInterval">How often to send a PING. Defaults to 30 s.</param>
+    /// <param name="pongTimeout">How long to wait for a PONG before closing. Defaults to 10 s.</param>
+    public TlsMessageChannel(
+        SslStream stream,
+        string remoteDeviceId,
+        TimeSpan? keepaliveInterval = null,
+        TimeSpan? pongTimeout = null)
     {
-        _stream        = stream        ?? throw new ArgumentNullException(nameof(stream));
-        RemoteDeviceId = remoteDeviceId ?? throw new ArgumentNullException(nameof(remoteDeviceId));
+        _stream            = stream        ?? throw new ArgumentNullException(nameof(stream));
+        RemoteDeviceId     = remoteDeviceId ?? throw new ArgumentNullException(nameof(remoteDeviceId));
+        _keepaliveInterval = keepaliveInterval ?? DefaultKeepaliveInterval;
+        _pongTimeout       = pongTimeout       ?? DefaultPongTimeout;
     }
 
     // ── IMessageChannel ────────────────────────────────────────────────────
@@ -216,7 +227,7 @@ public sealed class TlsMessageChannel : IMessageChannel
         {
             while (!cancellationToken.IsCancellationRequested && _connected)
             {
-                await Task.Delay(KeepaliveInterval, cancellationToken).ConfigureAwait(false);
+                await Task.Delay(_keepaliveInterval, cancellationToken).ConfigureAwait(false);
 
                 if (!_connected) break;
 
@@ -234,8 +245,8 @@ public sealed class TlsMessageChannel : IMessageChannel
                     break;
                 }
 
-                // Wait for PONG (poll at 250ms intervals up to PongTimeout)
-                var deadline = pingTime + PongTimeout;
+                // Wait for PONG (poll at 250ms intervals up to _pongTimeout)
+                var deadline = pingTime + _pongTimeout;
                 while (DateTime.UtcNow < deadline)
                 {
                     if (_lastPongUtc >= pingTime) break;
