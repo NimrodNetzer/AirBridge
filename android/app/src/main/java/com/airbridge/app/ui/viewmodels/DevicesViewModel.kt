@@ -2,6 +2,8 @@ package com.airbridge.app.ui.viewmodels
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.airbridge.app.core.DeviceConnectionService
+import com.airbridge.app.core.ReconnectState
 import com.airbridge.app.core.interfaces.IDeviceRegistry
 import com.airbridge.app.core.models.DeviceInfo
 import com.airbridge.app.core.models.DeviceType
@@ -25,6 +27,7 @@ import javax.inject.Inject
 class DevicesViewModel @Inject constructor(
     private val discoveryService: IDiscoveryService,
     private val deviceRegistry: IDeviceRegistry,
+    private val deviceConnectionService: DeviceConnectionService,
 ) : ViewModel() {
 
     private val _devices = MutableStateFlow<List<DeviceInfo>>(emptyList())
@@ -36,6 +39,19 @@ class DevicesViewModel @Inject constructor(
     private val _statusMessage = MutableStateFlow("Tap scan to find devices")
     val statusMessage: StateFlow<String> = _statusMessage.asStateFlow()
 
+    /**
+     * Mirrors [DeviceConnectionService.reconnectState].
+     * Non-null while an outbound reconnect to a paired device is in progress.
+     */
+    val reconnectState = deviceConnectionService.reconnectState
+
+    /**
+     * Emits a non-null error message when all reconnect attempts to a device are exhausted.
+     * Observed by the UI to show a dismissible error banner with a Retry button.
+     */
+    private val _connectionErrorMessage = MutableStateFlow<String?>(null)
+    val connectionErrorMessage: StateFlow<String?> = _connectionErrorMessage.asStateFlow()
+
     private var scanJob: Job? = null
     private var registryJob: Job? = null
 
@@ -46,8 +62,20 @@ class DevicesViewModel @Inject constructor(
                 _devices.value = list
             }
         }
+        // Surface permanent connection failures as an error message.
+        viewModelScope.launch {
+            deviceConnectionService.connectionFailedEvent.collect { deviceId ->
+                _connectionErrorMessage.value =
+                    "Could not connect to "$deviceId". Check that the PC is reachable."
+            }
+        }
         // Auto-start scanning so the user sees devices without tapping the search icon.
         startScan()
+    }
+
+    /** Dismisses the current connection error banner. */
+    fun dismissConnectionError() {
+        _connectionErrorMessage.value = null
     }
 
     /** Starts mDNS discovery and merges discovered devices into the registry. */

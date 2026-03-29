@@ -26,6 +26,10 @@ import javax.inject.Inject
  * @property totalBytes        Total file size in bytes.
  * @property transferredBytes  Bytes transferred so far.
  * @property state             Current [TransferState].
+ * @property speedBytesPerSec  Current transfer speed in bytes per second, or null if unknown.
+ * @property etaSeconds        Estimated seconds remaining, or null if unknown.
+ * @property errorMessage      Human-readable error description when [state] is [TransferState.FAILED].
+ * @property sourceUri         The original [Uri] for re-sending on retry; null for received files.
  */
 data class TransferSessionUiState(
     val sessionId: String,
@@ -33,6 +37,10 @@ data class TransferSessionUiState(
     val totalBytes: Long,
     val transferredBytes: Long,
     val state: TransferState,
+    val speedBytesPerSec: Long? = null,
+    val etaSeconds: Long? = null,
+    val errorMessage: String? = null,
+    val sourceUri: Uri? = null,
 )
 
 /**
@@ -40,6 +48,8 @@ data class TransferSessionUiState(
  *
  * Bridges the file-picker [Uri] to the [IFileTransferService] and maintains
  * the [activeSessions] list for UI observation.
+ * Also exposes [reconnectState] from [DeviceConnectionService] so the Transfer screen
+ * can show a "Reconnecting…" banner when the connection drops.
  */
 @HiltViewModel
 class TransferViewModel @Inject constructor(
@@ -63,8 +73,24 @@ class TransferViewModel @Inject constructor(
     private val _connectedDeviceId = MutableStateFlow<String?>(null)
     val connectedDeviceId: StateFlow<String?> = _connectedDeviceId.asStateFlow()
 
+    /**
+     * Mirrors [DeviceConnectionService.reconnectState] for UI consumption.
+     * Non-null while the transport layer is trying to reconnect.
+     */
+    val reconnectState = deviceConnectionService.reconnectState
+
+    /**
+     * Emits a non-null error message when a connection attempt fails permanently.
+     * The UI should show this as a dismissible error banner with a Retry button.
+     */
+    private val _connectionErrorMessage = MutableStateFlow<String?>(null)
+    val connectionErrorMessage: StateFlow<String?> = _connectionErrorMessage.asStateFlow()
+
     /** Tracks which device IDs we have already registered a receive handler for. */
     private val _handlerRegisteredFor = mutableSetOf<String>()
+
+    /** Tracks the last URI sent per session so that failed transfers can be retried. */
+    private val _pendingRetryUris = mutableMapOf<String, Uri>()
 
     init {
         // Observe connected device IDs from the session manager and surface the first one.
@@ -81,6 +107,19 @@ class TransferViewModel @Inject constructor(
                 }
             }
         }
+
+        // Surface permanent connection failures as a dismissible error message.
+        viewModelScope.launch {
+            deviceConnectionService.connectionFailedEvent.collect { deviceId ->
+                _connectionErrorMessage.value =
+                    "Could not connect to device "$deviceId". Check that the PC is reachable."
+            }
+        }
+    }
+
+    /** Dismisses the current connection error banner. */
+    fun dismissConnectionError() {
+        _connectionErrorMessage.value = null
     }
 
     /**
@@ -103,22 +142,46 @@ class TransferViewModel @Inject constructor(
                 transferService.sendFile(filePath, device)
             } catch (e: Exception) {
                 android.util.Log.e("AirBridge/Transfer", "sendFile failed: ${e.message}", e)
-                _errorMessage.value = "Send failed: ${e.message}"
+                _connectionErrorMessage.value = "Send failed: ${e.message}"
                 return@launch
             }
-            // Observe progress and state
             val uiState = TransferSessionUiState(
                 sessionId = session.sessionId,
                 fileName = session.fileName,
                 totalBytes = session.totalBytes,
                 transferredBytes = 0L,
                 state = TransferState.PENDING,
+                sourceUri = uri,
             )
             addOrUpdateSession(uiState)
+            _pendingRetryUris[session.sessionId] = uri
+
+            // Track speed and ETA using timestamps between progress updates.
+            var lastProgressBytes = 0L
+            var lastProgressTimeMs = System.currentTimeMillis()
 
             launch {
                 session.progressFlow.collect { transferred ->
-                    updateSessionProgress(session.sessionId, transferred)
+                    val nowMs = System.currentTimeMillis()
+                    val elapsedMs = nowMs - lastProgressTimeMs
+                    val bytesDelta = transferred - lastProgressBytes
+
+                    val speed: Long?
+                    val eta: Long?
+                    if (elapsedMs > 0 && bytesDelta >= 0) {
+                        speed = (bytesDelta * 1000L) / elapsedMs
+                        val remaining = session.totalBytes - transferred
+                        eta = if (speed > 0) remaining / speed else null
+                    } else {
+                        speed = null
+                        eta = null
+                    }
+
+                    lastProgressBytes = transferred
+                    lastProgressTimeMs = nowMs
+
+                    updateSessionProgress(session.sessionId, transferred, speed, eta)
+
                     val percent = if (session.totalBytes > 0)
                         ((transferred * 100) / session.totalBytes).toInt()
                     else 0
@@ -127,7 +190,10 @@ class TransferViewModel @Inject constructor(
             }
 
             session.stateFlow.collect { state ->
-                updateSessionState(session.sessionId, state)
+                val errMsg = if (state == TransferState.FAILED)
+                    "Transfer of "${session.fileName}" failed. Tap Retry to try again."
+                else null
+                updateSessionState(session.sessionId, state, errMsg)
                 when (state) {
                     TransferState.COMPLETED -> notificationManager.showComplete(session.fileName)
                     TransferState.FAILED, TransferState.CANCELLED -> notificationManager.cancel()
@@ -137,6 +203,21 @@ class TransferViewModel @Inject constructor(
         }
     }
 
+    /**
+     * Retries a previously failed transfer.
+     * Looks up the original [Uri] stored during [sendFile] and re-submits it.
+     * No-ops if the session is not in [TransferState.FAILED] state or the URI is unavailable.
+     */
+    fun retryTransfer(sessionId: String) {
+        val session = _activeSessions.value.find { it.sessionId == sessionId } ?: return
+        if (session.state != TransferState.FAILED) return
+        val uri = session.sourceUri ?: _pendingRetryUris[sessionId] ?: return
+
+        // Remove the failed session from the list before re-sending so it gets a fresh entry.
+        _activeSessions.value = _activeSessions.value.filter { it.sessionId != sessionId }
+        sendFile(uri)
+    }
+
     private fun addOrUpdateSession(uiState: TransferSessionUiState) {
         val current = _activeSessions.value.toMutableList()
         val index = current.indexOfFirst { it.sessionId == uiState.sessionId }
@@ -144,20 +225,29 @@ class TransferViewModel @Inject constructor(
         _activeSessions.value = current
     }
 
-    private fun updateSessionProgress(sessionId: String, transferred: Long) {
+    private fun updateSessionProgress(
+        sessionId: String,
+        transferred: Long,
+        speed: Long?,
+        eta: Long?,
+    ) {
         val current = _activeSessions.value.toMutableList()
         val index = current.indexOfFirst { it.sessionId == sessionId }
         if (index >= 0) {
-            current[index] = current[index].copy(transferredBytes = transferred)
+            current[index] = current[index].copy(
+                transferredBytes = transferred,
+                speedBytesPerSec = speed,
+                etaSeconds = eta,
+            )
             _activeSessions.value = current
         }
     }
 
-    private fun updateSessionState(sessionId: String, state: TransferState) {
+    private fun updateSessionState(sessionId: String, state: TransferState, errorMessage: String?) {
         val current = _activeSessions.value.toMutableList()
         val index = current.indexOfFirst { it.sessionId == sessionId }
         if (index >= 0) {
-            current[index] = current[index].copy(state = state)
+            current[index] = current[index].copy(state = state, errorMessage = errorMessage)
             _activeSessions.value = current
         }
     }
