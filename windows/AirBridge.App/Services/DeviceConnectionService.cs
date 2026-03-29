@@ -53,6 +53,16 @@ public sealed class DeviceConnectionService : IDisposable
         => _messageHandlers.TryRemove(deviceId, out _);
 
     /// <summary>
+    /// Removes a single previously-registered handler for <paramref name="deviceId"/>.
+    /// Use this to unregister a mirror handler without disturbing the file-transfer handler.
+    /// </summary>
+    public void RemoveMessageHandler(string deviceId, Func<ProtocolMessage, Task> handler)
+    {
+        if (_messageHandlers.TryGetValue(deviceId, out var handlers))
+            lock (handlers) { handlers.Remove(handler); }
+    }
+
+    /// <summary>
     /// Returns the active <see cref="IMessageChannel"/> for <paramref name="deviceId"/>,
     /// or <see langword="null"/> if no session is currently open for that device.
     /// </summary>

@@ -24,6 +24,11 @@ public sealed partial class MirrorViewModel : ObservableObject, IDisposable
     private IMessageChannel? _channel;
     private DeviceInfo? _connectedDevice;
 
+    // Handler registered with DeviceConnectionService for the active mirror session.
+    // Kept here so we can remove just this handler (not the file-transfer handler) on stop.
+    private Func<AirBridge.Transport.Protocol.ProtocolMessage, Task>? _mirrorHandler;
+    private string? _mirrorDeviceId;
+
     [ObservableProperty]
     private bool _isMirroring;
 
@@ -113,6 +118,18 @@ public sealed partial class MirrorViewModel : ObservableObject, IDisposable
                 _channel, mode, CancellationToken.None);
 
             _activeSession.StateChanged += OnSessionStateChanged;
+
+            // Register the session's inbound message handler so DeviceConnectionService
+            // (the sole channel reader) routes MirrorFrame / MirrorStop messages here,
+            // avoiding a concurrent SslStream read which throws NotSupportedException.
+            if (_activeSession is AirBridge.Mirror.MirrorSession mirrorSession &&
+                _connectedDevice is not null)
+            {
+                _mirrorDeviceId = _connectedDevice.DeviceId;
+                _mirrorHandler  = mirrorSession.CreateMessageHandler();
+                _connection.AddMessageHandler(_mirrorDeviceId, _mirrorHandler);
+            }
+
             StatusMessage = "Active";
         }
         catch (Exception ex)
@@ -135,10 +152,21 @@ public sealed partial class MirrorViewModel : ObservableObject, IDisposable
         finally
         {
             _activeSession.StateChanged -= OnSessionStateChanged;
+            UnregisterMirrorHandler();
             _activeSession.Dispose();
             _activeSession = null;
             IsMirroring    = false;
             StatusMessage  = "Session stopped";
+        }
+    }
+
+    private void UnregisterMirrorHandler()
+    {
+        if (_mirrorHandler is not null && _mirrorDeviceId is not null)
+        {
+            _connection.RemoveMessageHandler(_mirrorDeviceId, _mirrorHandler);
+            _mirrorHandler  = null;
+            _mirrorDeviceId = null;
         }
     }
 
@@ -166,6 +194,7 @@ public sealed partial class MirrorViewModel : ObservableObject, IDisposable
     {
         _connection.DeviceConnected    -= OnDeviceConnected;
         _connection.DeviceDisconnected -= OnDeviceDisconnected;
+        UnregisterMirrorHandler();
         _activeSession?.Dispose();
     }
 }

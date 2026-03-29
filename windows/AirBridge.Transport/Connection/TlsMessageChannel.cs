@@ -39,6 +39,13 @@ public sealed class TlsMessageChannel : IMessageChannel
     private readonly TimeSpan _pongTimeout;
 
     /// <summary>
+    /// Linked to the caller's token AND cancelled in <see cref="DisposeAsync"/>.
+    /// Ensures the keepalive loop stops immediately when the channel is disposed,
+    /// even if the caller's token is long-lived (e.g. the listener's lifetime token).
+    /// </summary>
+    private CancellationTokenSource? _keepaliveCts;
+
+    /// <summary>
     /// UTC timestamp of the last PONG received from the peer.
     /// Updated by the receive loop whenever a PONG arrives.
     /// </summary>
@@ -231,8 +238,14 @@ public sealed class TlsMessageChannel : IMessageChannel
     /// <param name="cancellationToken">
     /// Token that, when cancelled, gracefully terminates the keepalive loop.
     /// </param>
-    public Task StartKeepaliveAsync(CancellationToken cancellationToken) =>
-        Task.Run(() => KeepaliveLoopAsync(cancellationToken), cancellationToken);
+    public Task StartKeepaliveAsync(CancellationToken cancellationToken)
+    {
+        // Create an internal CTS linked to the caller's token so we can independently
+        // cancel the keepalive loop from DisposeAsync, regardless of how long-lived
+        // the caller's token is.
+        _keepaliveCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        return Task.Run(() => KeepaliveLoopAsync(_keepaliveCts.Token), _keepaliveCts.Token);
+    }
 
     private async Task KeepaliveLoopAsync(CancellationToken cancellationToken)
     {
@@ -289,6 +302,12 @@ public sealed class TlsMessageChannel : IMessageChannel
         if (_disposed) return;
         _disposed  = true;
         _connected = false;
+        // Cancel the keepalive loop immediately so it does not linger after the channel
+        // is disposed.  Without this, the loop sits in Task.Delay(30 s) even after
+        // _connected=false, causing ghost PINGs on dead channels minutes later.
+        _keepaliveCts?.Cancel();
+        _keepaliveCts?.Dispose();
+        _keepaliveCts = null;
         await _stream.DisposeAsync().ConfigureAwait(false);
         _writeLock.Dispose();
     }

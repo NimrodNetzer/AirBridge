@@ -41,6 +41,16 @@ public sealed class MirrorSession : IMirrorSession
     private IMirrorDecoder?     _decoder;
     private readonly object     _stateLock = new();
 
+    // ── Inbound message queue ─────────────────────────────────────────────
+    // MirrorSession must NOT call _channel.ReceiveAsync() directly because
+    // DeviceConnectionService.MonitorSessionAsync is already the single reader
+    // on the channel's SslStream (concurrent reads throw NotSupportedException).
+    // Instead, the caller registers CreateMessageHandler() with DeviceConnectionService
+    // so dispatched messages are written here and the session reads only from this queue.
+    private readonly System.Threading.Channels.Channel<ProtocolMessage> _inboundQueue =
+        System.Threading.Channels.Channel.CreateUnbounded<ProtocolMessage>(
+            new System.Threading.Channels.UnboundedChannelOptions { SingleReader = true });
+
     // ── Input send queue ───────────────────────────────────────────────────
     // Bounded channel so SendInputAsync is non-blocking and fire-and-forget safe.
     private readonly System.Threading.Channels.Channel<InputEventArgs> _inputQueue =
@@ -177,6 +187,24 @@ public sealed class MirrorSession : IMirrorSession
         return Task.CompletedTask;
     }
 
+    // ── Inbound message delivery ──────────────────────────────────────────
+
+    /// <summary>
+    /// Returns a handler delegate that delivers an incoming <see cref="ProtocolMessage"/>
+    /// into this session's internal queue.  Register this with
+    /// <c>DeviceConnectionService.AddMessageHandler</c> so that
+    /// <see cref="AirBridge.App.Services.DeviceConnectionService"/> — the sole
+    /// <see cref="IMessageChannel"/> reader — routes mirror-related messages here instead
+    /// of reading the channel a second time (which would throw
+    /// <see cref="NotSupportedException"/> on <see cref="System.Net.Security.SslStream"/>).
+    /// </summary>
+    public Func<ProtocolMessage, Task> CreateMessageHandler() =>
+        msg =>
+        {
+            _inboundQueue.Writer.TryWrite(msg);
+            return Task.CompletedTask;
+        };
+
     // ── Core receive / message pump ────────────────────────────────────────
 
     private async Task HandleMirrorStartAsync(CancellationToken ct)
@@ -213,16 +241,11 @@ public sealed class MirrorSession : IMirrorSession
         AirBridge.Core.AppLog.Info($"[Mirror:{SessionId}] Connecting → Active (decoder={(  _decoder is not null ? "yes" : "headless")}, window={(_window is not null ? "yes" : "none")})");
         State = MirrorState.Active;
 
-        // Message pump
-        while (!ct.IsCancellationRequested)
+        // Message pump — reads from the internal queue, NOT from _channel.ReceiveAsync().
+        // DeviceConnectionService is the sole channel reader; it dispatches messages here
+        // via the handler returned by CreateMessageHandler().
+        await foreach (var msg in _inboundQueue.Reader.ReadAllAsync(ct).ConfigureAwait(false))
         {
-            var msg = await _channel.ReceiveAsync(ct).ConfigureAwait(false);
-            if (msg is null)
-            {
-                AirBridge.Core.AppLog.Warn($"[Mirror:{SessionId}] Channel returned null — peer closed while Active");
-                break;
-            }
-
             switch (msg.Type)
             {
                 case MessageType.MirrorFrame:
@@ -235,14 +258,12 @@ public sealed class MirrorSession : IMirrorSession
                     AirBridge.Core.AppLog.Info($"[Mirror:{SessionId}] Active → Stopped (MirrorStop received)");
                     _window?.Close();
                     State = MirrorState.Stopped;
+                    _cts?.Cancel(); // unblock RunInputSendLoopAsync
                     return;
 
                 // ACKs from the Android transfer receiver — forwarded, not consumed here
                 case MessageType.FileTransferAck:
                 case MessageType.FileTransferEnd:
-                    break;
-
-                default:
                     break;
             }
         }
@@ -305,6 +326,8 @@ public sealed class MirrorSession : IMirrorSession
 
     private void CleanUp()
     {
+        // Complete the inbound queue so ReadAllAsync exits if it is still running.
+        _inboundQueue.Writer.TryComplete();
         try { _window?.Close(); }   catch { }
         try { _decoder?.Dispose(); } catch { }
         _decoder = null;
