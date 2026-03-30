@@ -305,6 +305,15 @@ public sealed class DeviceConnectionService : IDisposable
 
                 AppLog.Info($"RX [{deviceId}] type={msg.Type} len={msg.Payload?.Length ?? 0}");
 
+                // Android re-pair request: device lost its pairing state (e.g., app reinstalled).
+                // Handle it just like a first-time pairing request.
+                if (msg.Type == MessageType.PairingRequest)
+                {
+                    AppLog.Info($"Re-pair request from known device {deviceId} — handling pairing flow");
+                    HandlePairingRequestMessage(channel, msg);
+                    continue;
+                }
+
                 // Android-initiated mirror: raise event so MirrorViewModel can start a session.
                 // The MirrorStart is also forwarded to any registered handlers below so that
                 // if a session handler is already registered it can process it too.
@@ -413,35 +422,42 @@ public sealed class DeviceConnectionService : IDisposable
                 return;
             }
 
-            byte[] remoteKey;
-            string pin;
-            try
-            {
-                (remoteKey, pin) = AirBridge.Transport.Pairing.PairingCoordinator.ParseRequestPayload(msg.Payload);
-            }
-            catch
-            {
-                // Malformed payload — drop silently.
-                await channel.DisposeAsync().ConfigureAwait(false);
-                return;
-            }
-
-            // Use remote endpoint as temporary device ID until handshake completes.
-            var remoteId = channel.RemoteDeviceId;
-
-            _pendingPairingChannel   = channel;
-            _pendingRemoteKey        = remoteKey;
-            _pendingRemoteDeviceId   = remoteId;
-            _pendingPin              = pin;
-
-            _pairing.RaisePinGenerated(pin);
-            IncomingPairingRequest?.Invoke(this, (pin, remoteId));
+            HandlePairingRequestMessage(channel, msg);
         }
         catch
         {
             // ignore — bad connection attempt; dispose channel best-effort
             try { await channel.DisposeAsync().ConfigureAwait(false); } catch { }
         }
+    }
+
+    /// <summary>
+    /// Parses a PairingRequest message and sets the pending pairing state so the UI can
+    /// show the PIN and call <see cref="AcceptIncomingPairingAsync"/>. Used both for
+    /// first-time pairing (unknown device) and re-pair (device lost its KeyStore).
+    /// </summary>
+    private void HandlePairingRequestMessage(IMessageChannel channel, ProtocolMessage msg)
+    {
+        byte[] remoteKey;
+        string pin;
+        try
+        {
+            (remoteKey, pin) = AirBridge.Transport.Pairing.PairingCoordinator.ParseRequestPayload(msg.Payload);
+        }
+        catch
+        {
+            AppLog.Warn($"Malformed PairingRequest payload from {channel.RemoteDeviceId} — ignoring");
+            return;
+        }
+
+        var remoteId = channel.RemoteDeviceId;
+        _pendingPairingChannel  = channel;
+        _pendingRemoteKey       = remoteKey;
+        _pendingRemoteDeviceId  = remoteId;
+        _pendingPin             = pin;
+
+        _pairing.RaisePinGenerated(pin);
+        IncomingPairingRequest?.Invoke(this, (pin, remoteId));
     }
 
     /// <summary>
@@ -491,8 +507,19 @@ public sealed class DeviceConnectionService : IDisposable
                 IsPaired:   true);
             _registry.AddOrUpdate(device);
 
-            // Keep the channel alive as the active session.
-            RegisterSession(remoteId, channel);
+            // If the channel is already the active session (re-pair from a known device),
+            // do NOT call RegisterSession — that would start a second MonitorSessionAsync
+            // on the same SslStream causing a concurrent-read crash.
+            // Just fire DeviceConnected so the UI updates.
+            if (_activeSessions.TryGetValue(remoteId, out var existing) && ReferenceEquals(existing, channel))
+            {
+                AppLog.Info($"Re-pair accepted for active session {remoteId} — skipping RegisterSession");
+                DeviceConnected?.Invoke(this, remoteId);
+            }
+            else
+            {
+                RegisterSession(remoteId, channel);
+            }
 
             return true;
         }

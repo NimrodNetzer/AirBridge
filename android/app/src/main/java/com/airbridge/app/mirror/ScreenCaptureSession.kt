@@ -35,7 +35,12 @@ class ScreenCaptureSession(
 ) {
     private val scope = CoroutineScope(Dispatchers.IO + Job())
 
-    private val _frames = MutableSharedFlow<MirrorFrameMessage>(extraBufferCapacity = 60)
+    // DROP_OLDEST: if the network send loop falls behind the encoder, drop stale frames
+    // rather than suspending drainEncoder (which would stall the encoder's output queue).
+    private val _frames = MutableSharedFlow<MirrorFrameMessage>(
+        extraBufferCapacity = 60,
+        onBufferOverflow    = kotlinx.coroutines.channels.BufferOverflow.DROP_OLDEST
+    )
 
     // SPS/PPS parameter-set bytes emitted by MediaCodec as BUFFER_FLAG_CODEC_CONFIG.
     // Stored here and prepended to every IDR (keyframe) NAL unit so the Windows decoder
@@ -86,6 +91,13 @@ class ScreenCaptureSession(
                 MediaFormat.KEY_COLOR_FORMAT,
                 MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface
             )
+            // Real-time priority: minimize encoder internal buffering for lower latency.
+            // KEY_PRIORITY 0 = real-time (vs 1 = background). API 23+.
+            setInteger(MediaFormat.KEY_PRIORITY, 0)
+            // Reduce encoder output delay to at most 0 extra frames. API 30+.
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
+                setInteger(MediaFormat.KEY_LATENCY, 0)
+            }
         }
 
         val encoder = MediaCodec.createEncoderByType(MediaFormat.MIMETYPE_VIDEO_AVC)
@@ -218,9 +230,9 @@ class ScreenCaptureSession(
 
                 try { encoder.releaseOutputBuffer(outputIndex, false) } catch (_: IllegalStateException) { break }
 
-                // Use emit (suspending) rather than tryEmit so the drain loop applies
-                // backpressure when the network send is slow, instead of silently dropping frames.
-                _frames.emit(frame)
+                // tryEmit: non-blocking. With DROP_OLDEST overflow policy the SharedFlow will
+                // discard the oldest buffered frame if full, keeping drainEncoder always running.
+                _frames.tryEmit(frame)
             } catch (e: IllegalStateException) {
                 // codec.stop() was called while processing — exit cleanly.
                 break
@@ -230,9 +242,9 @@ class ScreenCaptureSession(
 
     companion object {
         /** Default encoder bitrate: 4 Mbps. */
-        const val DEFAULT_BITRATE_BPS = 4_000_000
-        /** IDR frame interval in seconds. */
-        private const val I_FRAME_INTERVAL_SECONDS = 2
+        const val DEFAULT_BITRATE_BPS = 2_000_000  // 2 Mbps: smaller frames = lower latency on the send path
+        /** IDR frame interval in seconds. Longer = fewer large keyframes = less bursty traffic. */
+        private const val I_FRAME_INTERVAL_SECONDS = 5
         /** Output buffer dequeue timeout in microseconds (10 ms). */
         private const val DEQUEUE_TIMEOUT_US = 10_000L
         private const val VIRTUAL_DISPLAY_NAME = "AirBridgeMirror"

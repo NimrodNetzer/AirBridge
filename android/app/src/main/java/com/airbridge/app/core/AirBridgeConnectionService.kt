@@ -57,11 +57,12 @@ class AirBridgeConnectionService : Service() {
         /** Starts the foreground service. Call when the first session becomes active. */
         fun start(context: Context) {
             val intent = Intent(context, AirBridgeConnectionService::class.java)
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                context.startForegroundService(intent)
-            } else {
-                context.startService(intent)
-            }
+            // Always use startService (not startForegroundService) to avoid the Android 14
+            // ForegroundServiceDidNotStartInTimeException race that fires when startForegroundService
+            // is called while a previous instance is still stopping.  The service calls
+            // startForeground itself in onCreate/onStartCommand within the same main-thread turn,
+            // which satisfies Android's requirement without the 5-second timer race.
+            context.startService(intent)
         }
 
         /** Stops the foreground service. Call when the last session closes or user disconnects. */

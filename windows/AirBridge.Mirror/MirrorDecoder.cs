@@ -64,8 +64,13 @@ public sealed class MirrorDecoder : IMirrorDecoder
     private bool _initialized;
     private bool _disposed;
 
-    private int _width;
-    private int _height;
+    private int  _width;
+    private int  _height;
+    // Monotonic presentation timestamp for WMF: increments by 1000/fps ms per frame.
+    // We ignore Android's absolute uptime timestamps entirely — they create scheduling
+    // problems in WMF's internal clock and are not needed for a live-mirror (no A/V sync).
+    private long _nextTimestampMs = 0;
+    private const long FrameIntervalMs = 1000 / 30; // 33ms @ 30fps
 
     // ── Initialization ─────────────────────────────────────────────────────
 
@@ -111,9 +116,8 @@ public sealed class MirrorDecoder : IMirrorDecoder
         if (nalData is null || nalData.Length == 0)
             return Task.CompletedTask;
 
-        // Convert microseconds from Android MediaCodec to milliseconds for WMF timestamps.
-        long timestampMs = timestampUs / 1000;
-        SubmitNalUnit(nalData, timestampMs, isKeyFrame);
+        // Android timestamps are ignored — WMF uses a monotonic counter instead (see _nextTimestampMs).
+        SubmitNalUnit(nalData, 0, isKeyFrame);
         return Task.CompletedTask;
     }
 
@@ -144,6 +148,7 @@ public sealed class MirrorDecoder : IMirrorDecoder
             if (!isKeyFrame)
                 return DecodeResult.Failure("Dropped: waiting for first keyframe.");
             _seenKeyFrame = true;
+            AirBridge.Core.AppLog.Info($"[MirrorDecoder] First IDR keyframe queued ({nalData.Length}B)");
         }
 
         _nalQueue.Enqueue(new PendingNal(nalData, timestampMs, isKeyFrame));
@@ -189,11 +194,15 @@ public sealed class MirrorDecoder : IMirrorDecoder
                     return;
                 }
 
-                var ts     = TimeSpan.FromMilliseconds(nal.TimestampMs);
+                var ts     = TimeSpan.FromMilliseconds(_nextTimestampMs);
+                _nextTimestampMs += FrameIntervalMs;
                 var buffer = nal.NalData.AsBuffer();
                 var sample = MediaStreamSample.CreateFromBuffer(buffer, ts);
                 sample.KeyFrame = nal.IsKeyFrame;
                 request.Sample  = sample;
+
+                if (nal.IsKeyFrame)
+                    AirBridge.Core.AppLog.Info($"[MirrorDecoder] OnSampleRequested: delivered IDR keyframe ({nal.NalData.Length}B, ts={nal.TimestampMs}ms)");
 
                 // MediaPlayer renders directly from the MediaStreamSource pipeline —
                 // no external frame notification needed.
@@ -209,7 +218,8 @@ public sealed class MirrorDecoder : IMirrorDecoder
             }
             finally
             {
-                deferral.Complete();
+                try { deferral.Complete(); }
+                catch { /* MSS may already be closed during teardown — safe to ignore */ }
             }
         });
     }

@@ -174,11 +174,27 @@ public sealed class MirrorWindow : IMirrorWindowHost
     public void AttachDecoder(IMirrorDecoder decoder)
     {
         var mss = (decoder as MirrorDecoder)?.GetMediaStreamSource();
-        if (mss is null) return;
+        if (mss is null)
+        {
+            AirBridge.Core.AppLog.Error("[MirrorWindow] AttachDecoder: MediaStreamSource is null — decoder not initialized?");
+            return;
+        }
 
-        _mediaPlayer = new MediaPlayer { RealTimePlayback = true, AutoPlay = true };
-        _mediaPlayer.Source = MediaSource.CreateFromMediaStreamSource(mss);
+        // Subscribe to WMF pipeline events before starting playback so we capture
+        // any error or premature close that would leave the window black.
+        mss.Closed += (s, e) =>
+            AirBridge.Core.AppLog.Error($"[MirrorWindow] MediaStreamSource.Closed — WMF shut down the pipeline");
+
+        _mediaPlayer = new MediaPlayer { RealTimePlayback = true };
+        _mediaPlayer.MediaFailed += (s, e) =>
+            AirBridge.Core.AppLog.Error($"[MirrorWindow] MediaPlayer.MediaFailed — {e.ErrorMessage} (0x{e.ExtendedErrorCode:X})");
+        _mediaPlayer.MediaOpened += (s, e) =>
+            AirBridge.Core.AppLog.Info("[MirrorWindow] MediaPlayer.MediaOpened — pipeline ready, first frame expected soon");
+
+        // Attach to the XAML element BEFORE setting the source so the render surface
+        // is wired before WMF starts the decode pipeline.
         _videoElement.SetMediaPlayer(_mediaPlayer);
+        _mediaPlayer.Source = MediaSource.CreateFromMediaStreamSource(mss);
         _mediaPlayer.Play();
     }
 
@@ -196,12 +212,14 @@ public sealed class MirrorWindow : IMirrorWindowHost
                 // we tear down the pipeline.  Skipping this step leaves the native COM
                 // pipeline with a dangling back-pointer and causes AccessViolationException
                 // when the window is subsequently closed.
-                _videoElement.SetMediaPlayer(null);
-                _mediaPlayer.Source = null;
-                _mediaPlayer.Dispose();
+                // Wrapped in try-catch: if the WMF pipeline already closed (MSS.Closed fired),
+                // these calls can throw COM exceptions that would crash the app.
+                try { _videoElement.SetMediaPlayer(null); } catch { }
+                try { _mediaPlayer.Source = null; }         catch { }
+                try { _mediaPlayer.Dispose(); }             catch { }
                 _mediaPlayer = null;
             }
-            _window.Close();
+            try { _window.Close(); } catch { }
         });
     }
 
