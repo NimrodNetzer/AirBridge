@@ -36,4 +36,7 @@ public sealed partial class TransferPage : Page
 
         await ViewModel.SendFileCommand.ExecuteAsync(file.Path);
     }
+
+    private void TransferErrorBar_CloseButtonClick(InfoBar sender, object args)
+        => ViewModel.DismissErrorCommand.Execute(null);
 }

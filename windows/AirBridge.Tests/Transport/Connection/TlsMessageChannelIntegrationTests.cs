@@ -213,6 +213,51 @@ public class TlsMessageChannelIntegrationTests : IAsyncLifetime
         await channel.DisposeAsync();
     }
 
+    // ── Test 3: PONG timeout ─────────────────────────────────────────────────
+
+    /// <summary>
+    /// If a PING is sent and no PONG arrives within the timeout window, the channel
+    /// must close and <see cref="TlsMessageChannel.IsConnected"/> must become false.
+    /// This test uses a fast-path approach: we verify the keepalive loop eventually
+    /// closes a channel when the peer never responds.
+    ///
+    /// Note: the real keepalive uses 30 s interval + 10 s timeout.  To keep the test
+    /// fast we confirm that the <see cref="TlsMessageChannel.Disconnected"/> event
+    /// fires within a reasonable bound after a keepalive loop is started on an already-
+    /// dead socket (the peer end is closed immediately after setup).
+    /// </summary>
+    [Fact]
+    public async Task PongTimeout_ClosesChannel()
+    {
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(60));
+        var (client, server) = await CreateLoopbackPairAsync(cts.Token);
+
+        // Close the server end without sending any data — client will get no PONG.
+        await server.DisposeAsync();
+
+        // Start keepalive on the client and wait for its Disconnected event.
+        var disconnectTcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        client.Disconnected += (_, _) => disconnectTcs.TrySetResult(true);
+
+        using var keepaliveCts = new CancellationTokenSource();
+        var keepaliveTask = client.StartKeepaliveAsync(keepaliveCts.Token);
+
+        // The channel should detect the dead connection within keepalive interval + pong timeout
+        // (~40 s in production).  For CI we allow 50 s.
+        await Task.WhenAny(
+            disconnectTcs.Task,
+            Task.Delay(TimeSpan.FromSeconds(50), cts.Token));
+
+        Assert.True(disconnectTcs.Task.IsCompleted, "Channel should have closed after PONG timeout.");
+        Assert.False(client.IsConnected);
+
+        // Cancel the keepalive loop and await the task so no dangling thread outlives the test.
+        keepaliveCts.Cancel();
+        try { await keepaliveTask; } catch (OperationCanceledException) { }
+        await client.DisposeAsync();
+    }
+
+
     // ── Test 4: Reconnect ─────────────────────────────────────────────────────
 
     /// <summary>

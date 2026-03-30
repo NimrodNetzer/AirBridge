@@ -91,6 +91,9 @@ public sealed class DeviceConnectionService : IDisposable
     /// </summary>
     public event EventHandler<AndroidMirrorStartArgs>? AndroidMirrorStartRequested;
 
+    /// <summary>Raised with the device ID when an automatic reconnect attempt begins.</summary>
+    public event EventHandler<string>? DeviceReconnecting;
+
     // ── Existing fields ─────────────────────────────────────────────────────
 
     /// <summary>PIN from a pending inbound pairing request, or null if none.</summary>
@@ -241,6 +244,7 @@ public sealed class DeviceConnectionService : IDisposable
             }
 
             AppLog.Info($"[ConnSvc] Session dropped for {device.DeviceId}; reconnecting immediately");
+            DeviceReconnecting?.Invoke(this, device.DeviceId);
         }
     }
 

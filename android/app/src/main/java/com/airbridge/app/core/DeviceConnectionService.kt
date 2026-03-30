@@ -44,6 +44,19 @@ import javax.inject.Singleton
 data class MirrorStartRequest(val deviceId: String)
 
 /**
+ * Represents the reconnect state for a device that is currently being re-connected to.
+ *
+ * @property deviceId  The device being reconnected.
+ * @property attempt   The current attempt number (1-based).
+ * @property maxAttempts Total number of attempts allowed.
+ */
+data class ReconnectState(
+    val deviceId: String,
+    val attempt: Int,
+    val maxAttempts: Int,
+)
+
+/**
  * Represents an inbound pairing request received from a remote (typically Windows) device.
  *
  * @param device    Synthetic [DeviceInfo] built from the connection's remote address.
@@ -171,6 +184,20 @@ class DeviceConnectionService @Inject constructor(
     val lastInboundPairingResult: StateFlow<PairingResult?> = _lastInboundPairingResult.asStateFlow()
 
     // ── Lifecycle ─────────────────────────────────────────────────────────
+
+    /**
+     * Non-null while an outbound reconnect is in progress; null when connected or idle.
+     * The UI can observe this to show a "Reconnecting…" indicator.
+     */
+    private val _reconnectState = MutableStateFlow<ReconnectState?>(null)
+    val reconnectState: StateFlow<ReconnectState?> = _reconnectState.asStateFlow()
+
+    /**
+     * Emits the device ID of a connection that failed all reconnect attempts.
+     * The UI can observe this to show a "Connection failed" error with a Retry button.
+     */
+    private val _connectionFailedEvent = MutableSharedFlow<String>()
+    val connectionFailedEvent: SharedFlow<String> = _connectionFailedEvent.asSharedFlow()
 
     /**
      * Starts listening for inbound TLS connections and routing them.

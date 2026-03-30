@@ -5,8 +5,9 @@
       xmlns:vm="using:AirBridge.App.ViewModels"
       Background="Transparent">
 
-    <Grid Margin="24,16" RowSpacing="16">
+    <Grid Margin="24,16" RowSpacing="12">
         <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="*"/>
@@ -39,8 +40,23 @@
                  Severity="Informational"
                  Message="{x:Bind ViewModel.ConnectedDeviceName, Mode=OneWay}"/>
 
+        <!-- Error banner (connection drop / transfer failure) -->
+        <InfoBar Grid.Row="2"
+                 IsOpen="{x:Bind ViewModel.HasError, Mode=OneWay}"
+                 IsClosable="True"
+                 Severity="Error"
+                 Title="Transfer Error"
+                 Message="{x:Bind ViewModel.ErrorMessage, Mode=OneWay}"
+                 CloseButtonClick="TransferErrorBar_CloseButtonClick">
+            <InfoBar.ActionButton>
+                <Button Content="Retry"
+                        Style="{StaticResource AccentButtonStyle}"
+                        Command="{x:Bind ViewModel.RetrySendCommand}"/>
+            </InfoBar.ActionButton>
+        </InfoBar>
+
         <!-- Transfer list -->
-        <ListView Grid.Row="2"
+        <ListView Grid.Row="3"
                   ItemsSource="{x:Bind ViewModel.Transfers}"
                   SelectionMode="None"
                   ScrollViewer.VerticalScrollBarVisibility="Auto">
@@ -59,6 +75,7 @@
                             CornerRadius="8"
                             Padding="16,12">
                         <StackPanel Spacing="8">
+                            <!-- File name + status badge -->
                             <Grid>
                                 <Grid.ColumnDefinitions>
                                     <ColumnDefinition Width="*"/>
@@ -76,7 +93,25 @@
                                                Foreground="White"/>
                                 </Border>
                             </Grid>
+
+                            <!-- Progress bar -->
                             <ProgressBar Value="{x:Bind Progress, Mode=OneWay}" Maximum="1.0"/>
+
+                            <!-- Speed + ETA row (only while active) -->
+                            <Grid Visibility="{x:Bind IsActive, Mode=OneWay, Converter={StaticResource BoolToVisibility}}">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Grid.Column="0"
+                                           Text="{x:Bind SpeedText, Mode=OneWay}"
+                                           Style="{StaticResource CaptionTextBlockStyle}"
+                                           Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                                <TextBlock Grid.Column="1"
+                                           Text="{x:Bind EtaText, Mode=OneWay}"
+                                           Style="{StaticResource CaptionTextBlockStyle}"
+                                           Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                            </Grid>
                         </StackPanel>
                     </Border>
                 </DataTemplate>
