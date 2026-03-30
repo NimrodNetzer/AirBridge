@@ -37,6 +37,11 @@ class ScreenCaptureSession(
 
     private val _frames = MutableSharedFlow<MirrorFrameMessage>(extraBufferCapacity = 60)
 
+    // SPS/PPS parameter-set bytes emitted by MediaCodec as BUFFER_FLAG_CODEC_CONFIG.
+    // Stored here and prepended to every IDR (keyframe) NAL unit so the Windows decoder
+    // always receives a self-contained, decodable keyframe regardless of stream position.
+    @Volatile private var spsPpsBytes: ByteArray? = null
+
     /**
      * Flow of encoded [MirrorFrameMessage] objects emitted as each H.264 NAL unit
      * is produced by the encoder. Collect this before calling [start].
@@ -119,8 +124,17 @@ class ScreenCaptureSession(
         }
     }
 
+    /**
+     * Optional callback invoked when the capture session stops for any reason
+     * (explicit [stop] call or external MediaProjection revocation).
+     * [PhoneCaptureService] wires this to its own [stopCapture] so that a
+     * system-initiated projection stop always triggers a clean MIRROR_STOP teardown.
+     */
+    var onStopped: (() -> Unit)? = null
+
     /** Stops capture, releases the encoder and virtual display. */
     fun stop() {
+        if (!isRunning) return  // already stopped — prevent double-invoke of onStopped
         isRunning = false
         scope.cancel()
         try { codec?.stop() } catch (_: Exception) { }
@@ -129,6 +143,19 @@ class ScreenCaptureSession(
         try { projection.stop() } catch (_: Exception) { }
         codec          = null
         virtualDisplay = null
+        onStopped?.invoke()
+    }
+
+    /**
+     * Requests the encoder to emit a sync (IDR) frame as soon as possible.
+     * Called by [MirrorSession] when Windows signals it is ready to decode —
+     * ensures the first IDR is not missed due to pipeline startup latency.
+     */
+    fun requestKeyFrame() {
+        val c = codec ?: return
+        val params = android.os.Bundle()
+        params.putInt(android.media.MediaCodec.PARAMETER_KEY_REQUEST_SYNC_FRAME, 0)
+        try { c.setParameters(params) } catch (_: Exception) { }
     }
 
     // ── Private helpers ────────────────────────────────────────────────────
@@ -141,31 +168,62 @@ class ScreenCaptureSession(
         val bufferInfo = MediaCodec.BufferInfo()
 
         while (isRunning && scope.isActive) {
-            val outputIndex = encoder.dequeueOutputBuffer(bufferInfo, DEQUEUE_TIMEOUT_US)
+            val outputIndex = try {
+                encoder.dequeueOutputBuffer(bufferInfo, DEQUEUE_TIMEOUT_US)
+            } catch (e: IllegalStateException) {
+                // codec.stop() was called while we were blocked in a native dequeue call —
+                // this is normal during shutdown; exit the loop cleanly.
+                break
+            }
             if (outputIndex < 0) continue  // timeout or INFO_* constant — try again
 
             try {
-                val outputBuffer = encoder.getOutputBuffer(outputIndex) ?: continue
-                if (bufferInfo.flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG != 0) {
-                    // SPS/PPS config data — skip for now (included in first keyframe on many devices)
-                    encoder.releaseOutputBuffer(outputIndex, false)
+                val outputBuffer = encoder.getOutputBuffer(outputIndex)
+                if (outputBuffer == null) {
+                    try { encoder.releaseOutputBuffer(outputIndex, false) } catch (_: IllegalStateException) { break }
                     continue
                 }
 
-                val nalData = ByteArray(bufferInfo.size)
+                if (bufferInfo.flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG != 0) {
+                    // SPS/PPS parameter sets — store for prepending to keyframes rather than
+                    // skipping.  Without these the Windows H.264 decoder cannot initialise.
+                    val config = ByteArray(bufferInfo.size)
+                    outputBuffer.position(bufferInfo.offset)
+                    outputBuffer.get(config)
+                    spsPpsBytes = config
+                    try { encoder.releaseOutputBuffer(outputIndex, false) } catch (_: IllegalStateException) { break }
+                    continue
+                }
+
+                val rawNal = ByteArray(bufferInfo.size)
                 outputBuffer.position(bufferInfo.offset)
-                outputBuffer.get(nalData)
+                outputBuffer.get(rawNal)
 
                 val isKey = (bufferInfo.flags and MediaCodec.BUFFER_FLAG_KEY_FRAME) != 0
+
+                // Prepend the stored SPS/PPS bytes to every IDR (keyframe) so the Windows
+                // decoder always receives a self-contained decodable unit.
+                val nalData = if (isKey) {
+                    val sps = spsPpsBytes
+                    if (sps != null) sps + rawNal else rawNal
+                } else {
+                    rawNal
+                }
 
                 val frame = MirrorFrameMessage(
                     isKeyFrame              = isKey,
                     presentationTimestampUs = bufferInfo.presentationTimeUs,
                     nalData                 = nalData
                 )
-                _frames.tryEmit(frame)
-            } finally {
-                encoder.releaseOutputBuffer(outputIndex, false)
+
+                try { encoder.releaseOutputBuffer(outputIndex, false) } catch (_: IllegalStateException) { break }
+
+                // Use emit (suspending) rather than tryEmit so the drain loop applies
+                // backpressure when the network send is slow, instead of silently dropping frames.
+                _frames.emit(frame)
+            } catch (e: IllegalStateException) {
+                // codec.stop() was called while processing — exit cleanly.
+                break
             }
         }
     }

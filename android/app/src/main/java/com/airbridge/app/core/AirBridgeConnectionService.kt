@@ -7,6 +7,7 @@ import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
 import android.content.Intent
+import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.IBinder
 import androidx.core.app.NotificationCompat
@@ -74,6 +75,12 @@ class AirBridgeConnectionService : Service() {
     override fun onCreate() {
         super.onCreate()
         createNotificationChannel()
+        // Call startForeground immediately in onCreate so Android's 5-second
+        // ForegroundServiceDidNotStartInTimeException timer is satisfied as soon as
+        // the service is created, regardless of when onStartCommand runs.
+        // Android 10+ (API 29) requires the service type be passed explicitly;
+        // Android 14 enforces it strictly and will crash without it.
+        startForegroundCompat()
         deviceConnectionService.startNetworkMonitoring()
 
         // React to MIRROR_START requests from Windows: launch MirrorRequestActivity
@@ -98,7 +105,7 @@ class AirBridgeConnectionService : Service() {
             stopSelf()
             return START_NOT_STICKY
         }
-        startForeground(NOTIF_ID, buildNotification())
+        startForegroundCompat()
         AirBridgeLog.info("[FgService] Started foreground")
         // START_STICKY: if the OS kills us (very unlikely with a fg service), restart with a null intent
         return START_STICKY
@@ -114,6 +121,15 @@ class AirBridgeConnectionService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 
     // -------------------------------------------------------------------------
+
+    /** Calls startForeground with the correct service-type flag on API 29+. */
+    private fun startForegroundCompat() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            startForeground(NOTIF_ID, buildNotification(), ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
+        } else {
+            startForeground(NOTIF_ID, buildNotification())
+        }
+    }
 
     private fun createNotificationChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {

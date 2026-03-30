@@ -63,7 +63,6 @@ public sealed class MirrorDecoder : IMirrorDecoder
     private bool _seenKeyFrame;
     private bool _initialized;
     private bool _disposed;
-    private long _nextTimestampMs;
 
     private int _width;
     private int _height;
@@ -92,8 +91,11 @@ public sealed class MirrorDecoder : IMirrorDecoder
         _videoDescriptor = new VideoStreamDescriptor(encProps);
         _streamSource    = new MediaStreamSource(_videoDescriptor)
         {
-            CanSeek  = false,
-            Duration = TimeSpan.Zero  // live stream — no fixed duration
+            CanSeek    = false,
+            BufferTime = TimeSpan.Zero,  // minimize latency — don't pre-buffer for a live stream
+            // Duration intentionally not set: null = unbounded live stream.
+            // Setting Duration = TimeSpan.Zero would tell WMF "0-second stream" and cause
+            // it to stop pulling samples immediately, resulting in a black window.
         };
 
         _streamSource.SampleRequested += OnSampleRequested;
@@ -104,22 +106,14 @@ public sealed class MirrorDecoder : IMirrorDecoder
     // ── IMirrorDecoder ─────────────────────────────────────────────────────
 
     /// <inheritdoc/>
-    /// <remarks>
-    /// Detects IDR keyframes by inspecting the NAL unit type byte (bits 0–4 == 5).
-    /// Timestamps are synthesised at ~30 fps intervals; sub-ms accuracy is sufficient
-    /// for local Wi-Fi mirroring where the display refresh rate dominates.
-    /// </remarks>
-    public Task PushFrameAsync(byte[] frameData, CancellationToken cancellationToken = default)
+    public Task PushFrameAsync(byte[] nalData, bool isKeyFrame, long timestampUs, CancellationToken cancellationToken = default)
     {
-        if (frameData is null || frameData.Length == 0)
+        if (nalData is null || nalData.Length == 0)
             return Task.CompletedTask;
 
-        // NAL unit type lives in bits [4:0] of the first byte (H.264 Annex B,
-        // after any start-code prefix the caller has already stripped).
-        bool isKeyFrame = (frameData[0] & 0x1F) == 5; // IDR slice
-
-        long ts = System.Threading.Interlocked.Add(ref _nextTimestampMs, 33); // ~30 fps
-        SubmitNalUnit(frameData, ts, isKeyFrame);
+        // Convert microseconds from Android MediaCodec to milliseconds for WMF timestamps.
+        long timestampMs = timestampUs / 1000;
+        SubmitNalUnit(nalData, timestampMs, isKeyFrame);
         return Task.CompletedTask;
     }
 
@@ -182,13 +176,16 @@ public sealed class MirrorDecoder : IMirrorDecoder
         {
             try
             {
-                bool hasData = await _nalReady
-                    .WaitAsync(TimeSpan.FromMilliseconds(150), _cts.Token)
+                // Wait indefinitely for the next NAL unit.  A short timeout would
+                // send null (EOS) to WMF, which permanently stops sample requests.
+                // We rely solely on _cts for clean shutdown.
+                await _nalReady
+                    .WaitAsync(_cts.Token)
                     .ConfigureAwait(false);
 
-                if (!hasData || _cts.IsCancellationRequested || !_nalQueue.TryDequeue(out var nal))
+                if (_cts.IsCancellationRequested || !_nalQueue.TryDequeue(out var nal))
                 {
-                    request.Sample = null; // EOS signal to WMF
+                    request.Sample = null; // EOS on cancellation only
                     return;
                 }
 
@@ -198,11 +195,8 @@ public sealed class MirrorDecoder : IMirrorDecoder
                 sample.KeyFrame = nal.IsKeyFrame;
                 request.Sample  = sample;
 
-                // Raise FrameDecoded so subscribers (MirrorWindow) can present the frame.
-                // The bitmap here is a placeholder container at the correct dimensions;
-                // MirrorWindow renders the MediaPlayer surface directly for zero-copy.
-                var bitmap = new SoftwareBitmap(BitmapPixelFormat.Bgra8, _width, _height);
-                FrameDecoded?.Invoke(this, bitmap);
+                // MediaPlayer renders directly from the MediaStreamSource pipeline —
+                // no external frame notification needed.
                 FrameReady?.Invoke(this, EventArgs.Empty);
             }
             catch (OperationCanceledException)

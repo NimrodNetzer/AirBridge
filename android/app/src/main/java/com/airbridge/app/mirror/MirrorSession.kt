@@ -109,9 +109,8 @@ class MirrorSession(
         // When captureSession is present this session is the *sender* — DeviceConnectionService
         // already owns the sole read loop on channel.incomingMessages.  Launching additional
         // collect() calls here would compete for bytes on the DataInputStream, corrupting the
-        // framing and breaking the keepalive.  Skip the receive loops; message handling for
-        // MIRROR_STOP / INPUT_EVENT will be wired via DeviceConnectionService.addMessageHandler
-        // in a future iteration when input relay is tested end-to-end.
+        // framing and breaking the keepalive.  INPUT_EVENT and MIRROR_STOP are handled via
+        // DeviceConnectionService.addMessageHandler — see createMessageHandler() below.
         if (captureSession == null) {
             // Receiver mode (no capture source): handle incoming control messages directly.
             if (inputInjector != null) {
@@ -171,6 +170,54 @@ class MirrorSession(
      */
     override suspend fun sendInput(event: InputEventArgs) {
         inputInjector?.inject(event)
+    }
+
+    // ── Sender-mode message handler ───────────────────────────────────────
+
+    /**
+     * Returns a handler delegate that routes [INPUT_EVENT] and [MIRROR_STOP] messages
+     * into this session when it is running in sender mode (captureSession != null).
+     *
+     * Register this with [com.airbridge.app.core.DeviceConnectionService.addMessageHandler]
+     * immediately after [start] is called so Windows-originated control messages reach
+     * the session without competing with the DeviceConnectionService read loop.
+     *
+     * @param onStop Callback invoked when [MIRROR_STOP] is received from Windows.
+     *               Typically calls [PhoneCaptureService.stopCapture].
+     */
+    fun createMessageHandler(onStop: () -> Unit): suspend (ProtocolMessage) -> Unit = { msg ->
+        when (msg.type) {
+            MessageType.MIRROR_START -> {
+                // Windows sends MirrorStart after its decode pipeline is ready to signal
+                // "I'm set up — please send me a fresh IDR keyframe now."
+                AirBridgeLog.info("[Mirror:$sessionId] MIRROR_START from Windows → requesting IDR keyframe")
+                captureSession?.requestKeyFrame()
+            }
+            MessageType.INPUT_EVENT -> {
+                try {
+                    val inputMsg = InputEventMessage.fromBytes(msg.payload)
+                    val evtType = when (inputMsg.eventKind) {
+                        InputEventKind.TOUCH -> InputEventType.TOUCH
+                        InputEventKind.KEY   -> InputEventType.KEY
+                        InputEventKind.MOUSE -> InputEventType.MOUSE
+                    }
+                    sendInput(InputEventArgs(
+                        type        = evtType,
+                        normalizedX = inputMsg.normalizedX,
+                        normalizedY = inputMsg.normalizedY,
+                        keycode     = inputMsg.keycode,
+                        metaState   = inputMsg.metaState
+                    ))
+                } catch (_: Exception) {
+                    // Malformed message — drop
+                }
+            }
+            MessageType.MIRROR_STOP -> {
+                AirBridgeLog.info("[Mirror:$sessionId] MIRROR_STOP from Windows → stopping capture")
+                onStop()
+            }
+            else -> { /* ignore */ }
+        }
     }
 
     // ── Input relay receive loop ───────────────────────────────────────────

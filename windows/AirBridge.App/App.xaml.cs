@@ -74,11 +74,14 @@ public partial class App : Application
         // ── App-level orchestration ───────────────────────────────────────────
         services.AddSingleton<DeviceConnectionService>();
 
-        // ── ViewModels (transient — each navigation gets a fresh instance) ────
+        // ── ViewModels ────────────────────────────────────────────────────────
+        // MirrorViewModel must be a singleton: it subscribes to AndroidMirrorStartRequested
+        // on DeviceConnectionService so it can react to Android-initiated sessions even when
+        // the Mirror page has never been opened. MainWindow resolves it eagerly on startup.
         services.AddTransient<DevicesViewModel>();
         services.AddTransient<PairingViewModel>();
         services.AddTransient<TransferViewModel>();
-        services.AddTransient<MirrorViewModel>();
+        services.AddSingleton<MirrorViewModel>();
         services.AddTransient<SettingsViewModel>();
 
         // ── MainWindow (singleton so we can get its HWND for file pickers) ───

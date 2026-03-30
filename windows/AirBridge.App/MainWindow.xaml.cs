@@ -39,6 +39,11 @@ public sealed partial class MainWindow : Window
         var connectionSvc = App.Services.GetService(typeof(DeviceConnectionService)) as DeviceConnectionService;
         if (connectionSvc is not null)
             connectionSvc.IncomingPairingRequest += OnIncomingPairingRequest;
+
+        // Eagerly resolve MirrorViewModel on the UI thread so its DispatcherQueue is captured
+        // correctly and it subscribes to AndroidMirrorStartRequested before Android can initiate
+        // a mirror session (even if the user never navigates to the Mirror page).
+        _ = App.Services.GetService(typeof(AirBridge.App.ViewModels.MirrorViewModel));
     }
 
     private bool _pairingDialogOpen;

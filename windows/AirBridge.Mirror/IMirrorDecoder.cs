@@ -7,10 +7,18 @@ namespace AirBridge.Mirror;
 /// </summary>
 public interface IMirrorDecoder : IDisposable
 {
-    /// <summary>Feeds a raw encoded frame into the decoder pipeline.</summary>
-    /// <param name="frameData">Encoded video frame bytes.</param>
+    /// <summary>
+    /// Initializes the decode pipeline with the stream resolution.
+    /// Must be called before any <see cref="PushFrameAsync"/> calls.
+    /// </summary>
+    Task InitializeAsync(int width, int height);
+
+    /// <summary>Feeds a raw encoded NAL unit into the decoder pipeline.</summary>
+    /// <param name="nalData">Raw H.264 NAL bytes (Annex B, as produced by Android MediaCodec).</param>
+    /// <param name="isKeyFrame">True if this NAL unit is an IDR keyframe.</param>
+    /// <param name="timestampUs">Presentation timestamp in microseconds from the encoder.</param>
     /// <param name="cancellationToken">Token to cancel the decode operation.</param>
-    Task PushFrameAsync(byte[] frameData, CancellationToken cancellationToken = default);
+    Task PushFrameAsync(byte[] nalData, bool isKeyFrame, long timestampUs, CancellationToken cancellationToken = default);
 
     /// <summary>Raised when a decoded frame is ready for rendering.</summary>
     event EventHandler? FrameReady;

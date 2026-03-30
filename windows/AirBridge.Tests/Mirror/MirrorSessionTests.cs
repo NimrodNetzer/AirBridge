@@ -30,7 +30,9 @@ public class MirrorSessionTests
 
         public event EventHandler? FrameReady;
 
-        public Task PushFrameAsync(byte[] frameData, CancellationToken cancellationToken = default)
+        public Task InitializeAsync(int width, int height) => Task.CompletedTask;
+
+        public Task PushFrameAsync(byte[] nalData, bool isKeyFrame, long timestampUs, CancellationToken cancellationToken = default)
         {
             SubmitCount++;
             FrameReady?.Invoke(this, EventArgs.Empty);

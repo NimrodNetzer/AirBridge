@@ -6,8 +6,10 @@ import android.app.NotificationManager
 import android.app.Service
 import android.content.Context
 import android.content.Intent
+import android.content.pm.ServiceInfo
 import android.media.projection.MediaProjection
 import android.media.projection.MediaProjectionManager
+import android.os.Build
 import android.os.IBinder
 import android.util.DisplayMetrics
 import android.view.WindowManager
@@ -46,6 +48,7 @@ class PhoneCaptureService : Service() {
     private var mirrorSession: MirrorSession? = null
     private var captureSession: ScreenCaptureSession? = null
     private var captureJob: Job? = null
+    private var mirrorDeviceId: String? = null
 
     // ── Service lifecycle ──────────────────────────────────────────────────
 
@@ -54,6 +57,12 @@ class PhoneCaptureService : Service() {
     override fun onCreate() {
         super.onCreate()
         createNotificationChannel()
+        // Satisfy Android's 5-second startForeground() requirement immediately in onCreate.
+        // We intentionally do NOT specify FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION here:
+        // Android 14+ rejects that type unless a valid MediaProjection token already exists,
+        // which we don't have yet at onCreate time.  We upgrade to the proper type inside
+        // beginCapture() once the token has been obtained from the user.
+        startForeground(NOTIFICATION_ID, buildNotification())
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -67,7 +76,6 @@ class PhoneCaptureService : Service() {
                     stopSelf(); return START_NOT_STICKY
                 }
 
-                startForeground(NOTIFICATION_ID, buildNotification())
                 beginCapture(resultCode, data, deviceId)
             }
 
@@ -95,6 +103,12 @@ class PhoneCaptureService : Service() {
         val projection: MediaProjection =
             projectionManager.getMediaProjection(resultCode, data)
 
+        // Now that we hold a valid MediaProjection token, upgrade the foreground service type
+        // to FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION.  Android 14+ requires the token to
+        // exist before this type can be declared; calling it here (not in onCreate) satisfies
+        // that constraint.
+        startForegroundCompat()
+
         val windowManager = getSystemService(Context.WINDOW_SERVICE) as WindowManager
         val metrics = DisplayMetrics()
         @Suppress("DEPRECATION")
@@ -112,6 +126,9 @@ class PhoneCaptureService : Service() {
 
         val capture = ScreenCaptureSession(projection, dpi)
         captureSession = capture
+        // If the system revokes MediaProjection externally, propagate to a clean teardown
+        // so MIRROR_STOP is always sent to Windows.
+        capture.onStopped = { stopCapture() }
 
         val session = mirrorService.startMirrorWithChannel(
             sessionId      = sessionId,
@@ -121,7 +138,14 @@ class PhoneCaptureService : Service() {
             height         = height,
             fps            = fps,
         )
-        mirrorSession = session
+        mirrorSession   = session
+        mirrorDeviceId  = deviceId
+
+        // Register a message handler so INPUT_EVENT and MIRROR_STOP from Windows are
+        // forwarded to the session without competing with DeviceConnectionService's
+        // sole channel reader.
+        val handler = session.createMessageHandler(onStop = { stopCapture() })
+        deviceConnectionService.addMessageHandler(deviceId, handler)
 
         captureJob = scope.launch {
             // Start encoder
@@ -142,16 +166,27 @@ class PhoneCaptureService : Service() {
     private fun stopCapture() {
         captureJob?.cancel()
         captureSession?.stop()
+        // Remove message handler before stopping session to prevent stray INPUT_EVENTs
+        mirrorDeviceId?.let { deviceConnectionService.removeMessageHandlers(it) }
         scope.launch {
             try { mirrorSession?.stop() } catch (_: Exception) { }
         }
         mirrorSession  = null
         captureSession = null
+        mirrorDeviceId = null
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
     }
 
     // ── Notification helpers ───────────────────────────────────────────────
+
+    private fun startForegroundCompat() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            startForeground(NOTIFICATION_ID, buildNotification(), ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION)
+        } else {
+            startForeground(NOTIFICATION_ID, buildNotification())
+        }
+    }
 
     private fun createNotificationChannel() {
         val channel = NotificationChannel(

@@ -20,8 +20,20 @@ public interface IMirrorWindowHost
     /// </summary>
     void Show();
 
+    /// <summary>
+    /// Opens the window sized to the phone's resolution (scaled to fit the screen)
+    /// and pins it always-on-top. Must be called on the UI thread.
+    /// </summary>
+    void Open(int width, int height);
+
     /// <summary>Hides and closes the window.</summary>
     void Close();
+
+    /// <summary>
+    /// Attaches the decoder to the window's video surface so frames are rendered.
+    /// Called once after the decoder has been initialized with the stream resolution.
+    /// </summary>
+    void AttachDecoder(IMirrorDecoder decoder);
 
     /// <summary>
     /// Callback invoked whenever the user drops one or more files onto the window.

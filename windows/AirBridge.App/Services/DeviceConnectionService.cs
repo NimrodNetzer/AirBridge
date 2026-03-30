@@ -1,5 +1,6 @@
 using AirBridge.Core.Interfaces;
 using AirBridge.Core.Models;
+using AirBridge.Mirror;
 using AirBridge.Core.Pairing;
 using AirBridge.Transfer.Interfaces;
 using AirBridge.Transport.Interfaces;
@@ -8,6 +9,9 @@ using System.Collections.Concurrent;
 using System.Collections.ObjectModel;
 
 namespace AirBridge.App.Services;
+
+/// <summary>Event args for <see cref="DeviceConnectionService.AndroidMirrorStartRequested"/>.</summary>
+public sealed record AndroidMirrorStartArgs(string DeviceId, int Width, int Height);
 
 /// <summary>
 /// Orchestrates device discovery, connection establishment, and pairing
@@ -81,10 +85,11 @@ public sealed class DeviceConnectionService : IDisposable
     /// <summary>
     /// Raised when Android sends a <see cref="MessageType.MirrorStart"/> to Windows,
     /// indicating that the user tapped "mirror" on the Android device.
-    /// The string argument is the device ID. Windows should start a mirror session in response
-    /// without sending <see cref="MessageType.MirrorStart"/> back to Android.
+    /// The args carry the device ID and the screen dimensions reported by Android.
+    /// Windows should start a mirror session in response without sending
+    /// <see cref="MessageType.MirrorStart"/> back to Android.
     /// </summary>
-    public event EventHandler<string>? AndroidMirrorStartRequested;
+    public event EventHandler<AndroidMirrorStartArgs>? AndroidMirrorStartRequested;
 
     // ── Existing fields ─────────────────────────────────────────────────────
 
@@ -304,7 +309,16 @@ public sealed class DeviceConnectionService : IDisposable
                 // The MirrorStart is also forwarded to any registered handlers below so that
                 // if a session handler is already registered it can process it too.
                 if (msg.Type == MessageType.MirrorStart)
-                    AndroidMirrorStartRequested?.Invoke(this, deviceId);
+                {
+                    int w = 0, h = 0;
+                    if (msg.Payload?.Length >= 7)
+                    {
+                        var parsed = AirBridge.Mirror.MirrorStartMessage.FromBytes(msg.Payload);
+                        w = parsed.Width;
+                        h = parsed.Height;
+                    }
+                    AndroidMirrorStartRequested?.Invoke(this, new AndroidMirrorStartArgs(deviceId, w, h));
+                }
 
                 // Dispatch to all registered handlers for this device.
                 if (_messageHandlers.TryGetValue(deviceId, out var handlers))

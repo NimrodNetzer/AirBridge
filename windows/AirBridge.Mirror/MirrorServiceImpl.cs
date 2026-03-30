@@ -93,13 +93,24 @@ public sealed class MirrorServiceImpl : IMirrorService
     ///   <see cref="TabletDisplaySession"/> is created instead of a <see cref="MirrorSession"/>.
     /// </param>
     /// <param name="cancellationToken">Token to cancel the start operation.</param>
-    public Task<IMirrorSession> StartMirrorWithChannelAsync(
+    public async Task<IMirrorSession> StartMirrorWithChannelAsync(
         IMessageChannel channel,
         MirrorMode mode,
         CancellationToken cancellationToken = default,
-        bool androidInitiated = false)
+        bool androidInitiated = false,
+        int width = 0,
+        int height = 0)
     {
         ArgumentNullException.ThrowIfNull(channel);
+
+        // Stop any existing active session before starting a new one.
+        // This prevents duplicate sessions when the user clicks Start while an
+        // Android-initiated mirror is already running.
+        foreach (var existing in _sessions.Values.ToList())
+        {
+            try { await existing.StopAsync().ConfigureAwait(false); }
+            catch { /* best-effort */ }
+        }
 
         var sessionId = Guid.NewGuid().ToString("N");
 
@@ -121,7 +132,9 @@ public sealed class MirrorServiceImpl : IMirrorService
                 decoderFactory:   _decoderFactory,
                 windowFactory:    _windowFactory,
                 transferEngine:   _transferEngine,
-                androidInitiated: androidInitiated);
+                androidInitiated: androidInitiated,
+                width:            width,
+                height:           height);
         }
 
         _sessions[sessionId] = session;
@@ -133,7 +146,7 @@ public sealed class MirrorServiceImpl : IMirrorService
             session.Dispose();
         }, TaskContinuationOptions.OnlyOnRanToCompletion | TaskContinuationOptions.ExecuteSynchronously);
 
-        return Task.FromResult(session);
+        return session;
     }
 
     /// <inheritdoc/>

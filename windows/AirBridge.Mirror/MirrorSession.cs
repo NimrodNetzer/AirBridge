@@ -33,6 +33,8 @@ public sealed class MirrorSession : IMirrorSession
     private readonly ITransferEngine?                         _transferEngine;
     private readonly IProgress<long>?                         _transferProgress;
     private readonly bool                                     _androidInitiated;
+    private readonly int                                      _width;
+    private readonly int                                      _height;
 
     // ── Runtime state ──────────────────────────────────────────────────────
 
@@ -102,7 +104,9 @@ public sealed class MirrorSession : IMirrorSession
         Func<IMirrorDecoder, IMirrorWindowHost>? windowFactory = null,
         ITransferEngine? transferEngine = null,
         IProgress<long>? transferProgress = null,
-        bool androidInitiated = false)
+        bool androidInitiated = false,
+        int width = 0,
+        int height = 0)
     {
         SessionId         = sessionId ?? throw new ArgumentNullException(nameof(sessionId));
         _channel          = channel   ?? throw new ArgumentNullException(nameof(channel));
@@ -112,6 +116,8 @@ public sealed class MirrorSession : IMirrorSession
         _transferEngine   = transferEngine;
         _transferProgress = transferProgress;
         _androidInitiated = androidInitiated;
+        _width            = width  > 0 ? width  : 1080;  // fallback for Windows-initiated
+        _height           = height > 0 ? height : 2340;
     }
 
     // ── IMirrorSession lifecycle ───────────────────────────────────────────
@@ -173,7 +179,11 @@ public sealed class MirrorSession : IMirrorSession
             // Best-effort; channel may already be closed
         }
 
-        _window?.Close();
+        // Null out _window before closing so CleanUp() in the StartAsync finally block
+        // cannot attempt a second close on an already-closed WinUI 3 window (which crashes).
+        var win = _window;
+        _window = null;
+        win?.Close();
         State = MirrorState.Stopped;
     }
 
@@ -232,6 +242,11 @@ public sealed class MirrorSession : IMirrorSession
         {
             _decoder = _decoderFactory();
 
+            // Initialize the decoder with the stream resolution before any frames arrive.
+            // _width/_height come from the MirrorStart payload (Android-initiated) or
+            // fall back to 1080×2340 (Windows-initiated, Android will match its capture size).
+            await _decoder.InitializeAsync(_width, _height).ConfigureAwait(false);
+
             if (_windowFactory is not null)
             {
                 _window = _windowFactory(_decoder);
@@ -246,12 +261,32 @@ public sealed class MirrorSession : IMirrorSession
                         await SendFileAsync(file, _cts?.Token ?? default).ConfigureAwait(false);
                 };
 
-                _window.Show();
+                // Attach the decoder's MediaStreamSource to the window's video surface
+                // so WMF begins pulling NAL units and decoded frames appear on screen.
+                _window.AttachDecoder(_decoder);
+
+                // Open at phone resolution (scaled to fit screen), always-on-top.
+                _window.Open(_width, _height);
             }
         }
 
         AirBridge.Core.AppLog.Info($"[Mirror:{SessionId}] Connecting → Active (decoder={(  _decoder is not null ? "yes" : "headless")}, window={(_window is not null ? "yes" : "none")})");
         State = MirrorState.Active;
+
+        // Request a fresh IDR keyframe from Android.  The first IDR likely arrived before
+        // our decode pipeline was fully set up (~1s of window/decoder init) and was dropped.
+        // Sending MirrorStart signals Android to force a sync frame immediately.
+        if (_androidInitiated)
+        {
+            try
+            {
+                await _channel.SendAsync(
+                    new ProtocolMessage(MessageType.MirrorStart, Array.Empty<byte>()), ct)
+                    .ConfigureAwait(false);
+                AirBridge.Core.AppLog.Info($"[Mirror:{SessionId}] Sent MirrorStart → requested IDR from Android");
+            }
+            catch { /* best-effort */ }
+        }
 
         // Message pump — reads from the internal queue, NOT from _channel.ReceiveAsync().
         // DeviceConnectionService is the sole channel reader; it dispatches messages here
@@ -260,10 +295,20 @@ public sealed class MirrorSession : IMirrorSession
         {
             switch (msg.Type)
             {
+                case MessageType.MirrorStart:
+                    // Android echoes MirrorStart back when it receives ours (Windows-initiated).
+                    // Ignore it here — DeviceConnectionService raises AndroidMirrorStartRequested
+                    // separately; we must not act on it a second time inside the running session.
+                    AirBridge.Core.AppLog.Info($"[Mirror:{SessionId}] Ignoring MirrorStart echo from Android (already active)");
+                    break;
+
                 case MessageType.MirrorFrame:
                     AirBridge.Core.AppLog.Debug($"[Mirror:{SessionId}] MirrorFrame payload={msg.Payload.Length}B");
                     if (_decoder is not null)
-                        await _decoder.PushFrameAsync(msg.Payload, ct).ConfigureAwait(false);
+                    {
+                        var frame = MirrorFrameMessage.FromBytes(msg.Payload);
+                        await _decoder.PushFrameAsync(frame.NalData, frame.IsKeyFrame, frame.PresentationTimestampUs, ct).ConfigureAwait(false);
+                    }
                     break;
 
                 case MessageType.MirrorStop:
@@ -314,7 +359,7 @@ public sealed class MirrorSession : IMirrorSession
                     .ConfigureAwait(false);
             }
             catch (OperationCanceledException) { break; }
-            catch { /* Best-effort: drop the event if the channel is gone */ }
+            catch { break; /* Channel dead — stop the loop */ }
         }
     }
 

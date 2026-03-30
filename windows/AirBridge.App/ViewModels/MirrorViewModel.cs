@@ -65,15 +65,16 @@ public sealed partial class MirrorViewModel : ObservableObject, IDisposable
     private void OnDeviceConnected(object? sender, string deviceId)
         => _dispatcher.TryEnqueue(() => ActivateDevice(deviceId));
 
-    private void OnAndroidMirrorStartRequested(object? sender, string deviceId)
+    private void OnAndroidMirrorStartRequested(object? sender, AirBridge.App.Services.AndroidMirrorStartArgs args)
         => _dispatcher.TryEnqueue(async () =>
         {
             // Ensure the device is activated in case DeviceConnected fired just before this.
-            if (_connectedDevice is null || _connectedDevice.DeviceId != deviceId)
-                ActivateDevice(deviceId);
+            if (_connectedDevice is null || _connectedDevice.DeviceId != args.DeviceId)
+                ActivateDevice(args.DeviceId);
 
             if (IsMirroring) return; // already mirroring
-            await StartSessionAsync(MirrorMode.PhoneWindow, androidInitiated: true);
+            await StartSessionAsync(MirrorMode.PhoneWindow, androidInitiated: true,
+                                    width: args.Width, height: args.Height);
         });
 
     private void OnDeviceDisconnected(object? sender, string deviceId)
@@ -116,7 +117,8 @@ public sealed partial class MirrorViewModel : ObservableObject, IDisposable
 
     private bool CanStartSession() => IsConnected && !IsMirroring;
 
-    private async Task StartSessionAsync(MirrorMode mode, bool androidInitiated = false)
+    private async Task StartSessionAsync(MirrorMode mode, bool androidInitiated = false,
+                                          int width = 0, int height = 0)
     {
         if (_channel is null) return;
 
@@ -127,7 +129,7 @@ public sealed partial class MirrorViewModel : ObservableObject, IDisposable
             StatusMessage = "Connecting\u2026";
 
             _activeSession = await _mirrorService.StartMirrorWithChannelAsync(
-                _channel, mode, CancellationToken.None, androidInitiated);
+                _channel, mode, CancellationToken.None, androidInitiated, width, height);
 
             _activeSession.StateChanged += OnSessionStateChanged;
 
