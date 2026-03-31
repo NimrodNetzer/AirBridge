@@ -257,6 +257,7 @@ class TransferViewModel @Inject constructor(
         if (uri.scheme == "file") return uri.path
         // For content:// URIs, copy to a cache file so TransferSession can read it.
         val fileName = queryDisplayName(uri) ?: "transfer_file"
+
         val cacheFile = java.io.File(context.cacheDir, fileName)
         return try {
             context.contentResolver.openInputStream(uri)?.use { input ->

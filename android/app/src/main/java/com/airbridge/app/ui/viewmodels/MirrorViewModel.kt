@@ -96,6 +96,16 @@ class MirrorViewModel @Inject constructor(
         _mirrorState.value = MirrorUiState.Starting
         pendingDevice = device
 
+        // Android 14+ defaults the screen-capture consent dialog to "Share a single app"
+        // (whichever app is currently in the foreground).  Show a toast so the user
+        // knows to tap "Entire screen" before accepting — otherwise only the AirBridge
+        // UI is captured instead of the full display.
+        android.widget.Toast.makeText(
+            context,
+            "Select \"Entire screen\" in the next dialog",
+            android.widget.Toast.LENGTH_LONG
+        ).show()
+
         val pm = context.getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
         _pendingProjectionRequest.value = pm.createScreenCaptureIntent()
     }

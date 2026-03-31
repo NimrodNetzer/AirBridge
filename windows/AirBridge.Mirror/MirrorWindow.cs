@@ -5,6 +5,7 @@
 
 #if WINUI3
 
+using System.Runtime.InteropServices;
 using AirBridge.Core.Interfaces;
 using Microsoft.UI;
 using Microsoft.UI.Windowing;
@@ -19,6 +20,35 @@ using Windows.Media.Playback;
 using Windows.Storage;
 
 namespace AirBridge.Mirror;
+
+// ── Win32 / DWM / GDI P-Invoke ────────────────────────────────────────────
+internal static class NativeMethods
+{
+    [DllImport("dwmapi.dll", PreserveSig = false)]
+    internal static extern void DwmSetWindowAttribute(
+        IntPtr hwnd, int dwAttribute, ref int pvAttribute, int cbAttribute);
+
+    /// <summary>Creates a rounded-rectangle GDI region.</summary>
+    /// <param name="cx">Width of the corner ellipse (= 2 × corner radius in px).</param>
+    /// <param name="cy">Height of the corner ellipse (= 2 × corner radius in px).</param>
+    [DllImport("gdi32.dll")]
+    internal static extern IntPtr CreateRoundRectRgn(
+        int x1, int y1, int x2, int y2, int cx, int cy);
+
+    /// <summary>
+    /// Clips the window to the given region.  The OS takes ownership of the region
+    /// handle — do NOT call DeleteObject on it after a successful SetWindowRgn call.
+    /// </summary>
+    [DllImport("user32.dll")]
+    internal static extern int SetWindowRgn(IntPtr hwnd, IntPtr hRgn, bool bRedraw);
+
+    /// <summary>Returns the DPI for the monitor that hosts the given window.</summary>
+    [DllImport("user32.dll")]
+    internal static extern uint GetDpiForWindow(IntPtr hwnd);
+
+    internal const int DWMWA_WINDOW_CORNER_PREFERENCE = 33;
+    internal const int DWMWCP_DONOTROUND             = 1;   // no OS rounding (we handle it)
+}
 
 /// <summary>
 /// WinUI 3 floating window that renders the Android phone screen mirror,
@@ -43,6 +73,8 @@ public sealed class MirrorWindow : IMirrorWindowHost
 
     private readonly Window              _window;
     private readonly Grid                _rootGrid;
+    private readonly Border              _phoneBorder;   // outer phone-body shell
+    private readonly Border              _screenBorder;  // inner screen area (clipped)
     private readonly Border              _dropOverlay;
     private readonly MediaPlayerElement  _videoElement;
     private          MediaPlayer?        _mediaPlayer;
@@ -50,6 +82,15 @@ public sealed class MirrorWindow : IMirrorWindowHost
     // Cached client dimensions for normalising pointer coordinates.
     private int _windowWidth  = 1;
     private int _windowHeight = 1;
+
+    // Target window aspect ratio (width/height).
+    // Set in Open() and used to snap the window back to the correct ratio on resize.
+    private double _windowAspectRatio = 0.0;
+    private bool   _suppressResize    = false;
+    private IntPtr _hwnd              = IntPtr.Zero;
+
+    // Corner radius in WinUI DIPs — must match the CornerRadius set on _screenBorder.
+    private const double CornerRadiusDip = 40.0;
 
     // ── IMirrorWindowHost ──────────────────────────────────────────────────
 
@@ -83,31 +124,60 @@ public sealed class MirrorWindow : IMirrorWindowHost
         _dropOverlay = new Border
         {
             Background          = new SolidColorBrush(
-                                      Microsoft.UI.ColorHelper.FromArgb(0xCC, 0x00, 0x00, 0x00)),
-            HorizontalAlignment = HorizontalAlignment.Center,
-            VerticalAlignment   = VerticalAlignment.Center,
+                                      Microsoft.UI.ColorHelper.FromArgb(0xBB, 0x00, 0x00, 0x00)),
+            CornerRadius        = new CornerRadius(40),
+            HorizontalAlignment = HorizontalAlignment.Stretch,
+            VerticalAlignment   = VerticalAlignment.Stretch,
             Visibility          = Visibility.Collapsed,
             IsHitTestVisible    = false,
             Child               = new TextBlock
             {
-                Text       = "Drop to send file",
-                FontSize   = 24,
-                Foreground = new SolidColorBrush(Microsoft.UI.Colors.White),
+                Text                = "Drop to send file",
+                FontSize            = 22,
+                HorizontalAlignment = HorizontalAlignment.Center,
+                VerticalAlignment   = VerticalAlignment.Center,
+                Foreground          = new SolidColorBrush(Microsoft.UI.Colors.White),
             },
         };
 
         // ── Video element ──────────────────────────────────────────────────
+        // Stretch.UniformToFill: fills the entire screen area without letterboxing.
+        // This guards against any residual dimension mismatch (e.g. encoder padding)
+        // that would otherwise produce gray bars along an edge.
         _videoElement = new MediaPlayerElement
         {
             HorizontalAlignment = HorizontalAlignment.Stretch,
             VerticalAlignment   = VerticalAlignment.Stretch,
-            Stretch             = Stretch.Uniform,
+            Stretch             = Stretch.UniformToFill,
         };
 
+        // ── Screen border — the only visible container ─────────────────────
+        // No bezel, no padding.  The video fills edge-to-edge and the CornerRadius
+        // clips the content to the phone-screen shape.  DWM additionally clips the
+        // window frame itself to the same rounded shape (Win11+).
+        var screenGrid = new Grid();
+        screenGrid.Children.Add(_videoElement);
+        screenGrid.Children.Add(_dropOverlay);
+
+        // No CornerRadius here — the Win32 SetWindowRgn region already rounds the
+        // window outline at the OS level.  A XAML CornerRadius would clip the video
+        // inside the window and expose the window background color in the corners.
+        // Relying on SetWindowRgn alone gives clean edge-to-edge video with no gap.
+        _screenBorder = new Border
+        {
+            Background = new SolidColorBrush(Microsoft.UI.Colors.Black),
+            Child      = screenGrid,
+        };
+
+        // _phoneBorder is retained as a field alias to _screenBorder so pointer-hit
+        // normalisation (which uses _screenBorder) and the event tree below are consistent.
+        _phoneBorder = _screenBorder;
+
         // ── Root grid ──────────────────────────────────────────────────────
+        // Transparent background — the window's only visible content is the video.
+        // The DWM rounded corners clip the window frame; no dark background needed.
         _rootGrid = new Grid { AllowDrop = true };
-        _rootGrid.Children.Add(_videoElement);
-        _rootGrid.Children.Add(_dropOverlay);
+        _rootGrid.Children.Add(_screenBorder);
 
         // Drag-and-drop events
         _rootGrid.DragOver  += OnDragOver;
@@ -145,10 +215,11 @@ public sealed class MirrorWindow : IMirrorWindowHost
         var appWindow = _window.AppWindow;
         if (appWindow is not null)
         {
-            // Scale down if the phone resolution is taller than 80% of the screen height.
+            // Scale down so the window is at most 80% of the screen height.
+            // No bezel is added — the window dimensions are exactly the phone's pixel ratio.
             var displayArea = DisplayArea.GetFromWindowId(appWindow.Id, DisplayAreaFallback.Primary);
             int screenH = displayArea.WorkArea.Height;
-            int targetH = (int)(screenH * 0.8);
+            int targetH = (int)(screenH * 0.80);
             double scale = (_windowHeight > targetH) ? (double)targetH / _windowHeight : 1.0;
 
             int winW = Math.Max(1, (int)(_windowWidth  * scale));
@@ -157,9 +228,40 @@ public sealed class MirrorWindow : IMirrorWindowHost
             appWindow.Resize(new SizeInt32(winW, winH));
             appWindow.Move(new PointInt32(100, 100));
 
+            // Store aspect ratio and subscribe to size changes so user resizing
+            // always snaps back to the phone's correct proportions.
+            _windowAspectRatio = (double)winW / winH;
+            appWindow.Changed += OnAppWindowChanged;
+
             // Always-on-top
             if (appWindow.Presenter is OverlappedPresenter presenter)
                 presenter.IsAlwaysOnTop = true;
+
+            // Clip the Win32 window frame to a rounded rectangle that exactly matches
+            // the CornerRadius on the XAML content, so there is no square gap between
+            // the content corners and the window outline.
+            // We use SetWindowRgn (GDI region) rather than DWM DWMWCP_ROUND because:
+            //   - DWMWCP_ROUND only gives ~8 px system corners (too small)
+            //   - SetWindowRgn respects any corner radius and the region updates on resize
+            // Tell DWM not to apply its own rounding so the two don't conflict.
+            try
+            {
+                _hwnd = WinRT.Interop.WindowNative.GetWindowHandle(_window);
+
+                // Disable DWM's own rounding — our GDI region takes over.
+                int noRound = NativeMethods.DWMWCP_DONOTROUND;
+                NativeMethods.DwmSetWindowAttribute(
+                    _hwnd,
+                    NativeMethods.DWMWA_WINDOW_CORNER_PREFERENCE,
+                    ref noRound,
+                    sizeof(int));
+
+                ApplyRoundedRegion(_hwnd, winW, winH);
+            }
+            catch
+            {
+                // Non-fatal: visual enhancement only.
+            }
         }
 
         Show();
@@ -273,23 +375,30 @@ public sealed class MirrorWindow : IMirrorWindowHost
         => RaisePointerEvent(e, InputEventType.Touch);
 
     private void OnPointerMoved(object sender, PointerRoutedEventArgs e)
-        => RaisePointerEvent(e, InputEventType.Mouse);
+    {
+        // Only relay mouse moves when a button is held (i.e. the user is dragging).
+        // Without this check, every cursor movement over the window fires an event
+        // that Android's InputInjector processes as a touch/tap — causing phantom clicks.
+        var point = e.GetCurrentPoint(_screenBorder);
+        if (!point.Properties.IsLeftButtonPressed &&
+            !point.Properties.IsRightButtonPressed)
+            return;
+        RaisePointerEvent(e, InputEventType.Mouse);
+    }
 
     private void OnPointerReleased(object sender, PointerRoutedEventArgs e)
         => RaisePointerEvent(e, InputEventType.Touch);
 
     private void RaisePointerEvent(PointerRoutedEventArgs e, InputEventType eventType)
     {
-        var point = e.GetCurrentPoint(_rootGrid);
-        // Normalize against the grid's actual rendered size (DIPs), not the phone's native
-        // pixel resolution.  _windowWidth/_windowHeight are the phone's pixel dimensions
-        // (e.g. 1080×2340) but GetCurrentPoint returns coordinates in WinUI DIPs (e.g. 0-400),
-        // so dividing by the phone resolution produces a tiny fraction and maps every click
-        // to the top-left corner of the screen.
-        double w = Math.Max(1.0, _rootGrid.ActualWidth);
-        double h = Math.Max(1.0, _rootGrid.ActualHeight);
-        float nx  = Math.Clamp((float)(point.Position.X / w), 0f, 1f);
-        float ny  = Math.Clamp((float)(point.Position.Y / h), 0f, 1f);
+        // Normalise against the screen area (inside the phone bezel), not the full window.
+        // GetCurrentPoint(_screenBorder) gives coordinates relative to the video surface origin,
+        // so 0,0 is the top-left corner of the actual phone screen content.
+        var point = e.GetCurrentPoint(_screenBorder);
+        double w = Math.Max(1.0, _screenBorder.ActualWidth);
+        double h = Math.Max(1.0, _screenBorder.ActualHeight);
+        float nx = Math.Clamp((float)(point.Position.X / w), 0f, 1f);
+        float ny = Math.Clamp((float)(point.Position.Y / h), 0f, 1f);
         InputEventRaised?.Invoke(this, new InputEventArgs(eventType, nx, ny));
         e.Handled = true;
     }
@@ -314,6 +423,64 @@ public sealed class MirrorWindow : IMirrorWindowHost
     {
         // Frame rendering is handled by the MediaPlayer attached in AttachDecoder().
         // Nothing to do here — WMF pulls frames directly from the MediaStreamSource.
+    }
+
+    // ── Aspect-ratio enforcement ────────────────────────────────────────────
+
+    /// <summary>
+    /// Fires whenever the AppWindow size changes.  Constrains the window to the phone's
+    /// aspect ratio so resizing never produces black bars or a distorted bezel.
+    /// Width is treated as the authoritative dimension — height follows.
+    /// Also re-applies the rounded-region clip to match the new size.
+    /// </summary>
+    private void OnAppWindowChanged(AppWindow sender, AppWindowChangedEventArgs args)
+    {
+        if (!args.DidSizeChange || _windowAspectRatio <= 0 || _suppressResize) return;
+
+        var size = sender.Size;
+        int expectedH = Math.Max(1, (int)Math.Round(size.Width / _windowAspectRatio));
+
+        if (Math.Abs(expectedH - size.Height) <= 2)
+        {
+            // Size is already correct — just refresh the region for the new width.
+            if (_hwnd != IntPtr.Zero) ApplyRoundedRegion(_hwnd, size.Width, size.Height);
+            return;
+        }
+
+        _suppressResize = true;
+        try
+        {
+            sender.Resize(new SizeInt32(size.Width, expectedH));
+            if (_hwnd != IntPtr.Zero) ApplyRoundedRegion(_hwnd, size.Width, expectedH);
+        }
+        finally
+        {
+            _suppressResize = false;
+        }
+    }
+
+    /// <summary>
+    /// Clips the Win32 window to a rounded rectangle that exactly matches the XAML
+    /// <see cref="CornerRadiusDip"/> value, so the window outline and the content
+    /// corners align with no visible square gap.
+    /// </summary>
+    private static void ApplyRoundedRegion(IntPtr hwnd, int widthPx, int heightPx)
+    {
+        // Convert the XAML DIP corner radius to physical pixels using the window's DPI.
+        uint dpi       = NativeMethods.GetDpiForWindow(hwnd);
+        double scale   = dpi / 96.0;
+        int radiusPx   = Math.Max(1, (int)Math.Round(CornerRadiusDip * scale));
+
+        // CreateRoundRectRgn cx/cy are the *diameter* of the corner ellipse.
+        var rgn = NativeMethods.CreateRoundRectRgn(
+            0, 0, widthPx + 1, heightPx + 1,   // +1: GDI region is exclusive of right/bottom
+            radiusPx * 2, radiusPx * 2);
+
+        if (rgn != IntPtr.Zero)
+        {
+            // SetWindowRgn takes ownership — do not DeleteObject on success.
+            NativeMethods.SetWindowRgn(hwnd, rgn, true);
+        }
     }
 
     // ── StorageFileDroppedFile adapter ─────────────────────────────────────

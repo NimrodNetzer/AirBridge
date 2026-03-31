@@ -35,10 +35,12 @@ class ScreenCaptureSession(
 ) {
     private val scope = CoroutineScope(Dispatchers.IO + Job())
 
-    // DROP_OLDEST: if the network send loop falls behind the encoder, drop stale frames
-    // rather than suspending drainEncoder (which would stall the encoder's output queue).
+    // DROP_OLDEST with a tiny buffer: if the network send loop falls behind, drop
+    // stale frames immediately rather than queuing 2 seconds of backlog.
+    // 4 frames ≈ 133 ms headroom at 30 fps — enough for a TCP burst, not enough
+    // to cause visible lag.
     private val _frames = MutableSharedFlow<MirrorFrameMessage>(
-        extraBufferCapacity = 60,
+        extraBufferCapacity = 4,
         onBufferOverflow    = kotlinx.coroutines.channels.BufferOverflow.DROP_OLDEST
     )
 
@@ -91,12 +93,20 @@ class ScreenCaptureSession(
                 MediaFormat.KEY_COLOR_FORMAT,
                 MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface
             )
-            // Real-time priority: minimize encoder internal buffering for lower latency.
-            // KEY_PRIORITY 0 = real-time (vs 1 = background). API 23+.
-            setInteger(MediaFormat.KEY_PRIORITY, 0)
-            // Reduce encoder output delay to at most 0 extra frames. API 30+.
+            // VBR: Qualcomm/Samsung hardware encoders frequently reset under CBR when
+            // using surface input (the encoder can't maintain constant bitrate if the
+            // VirtualDisplay surface doesn't feed frames fast enough).  VBR with the
+            // 2 Mbps target still keeps frames small while avoiding encoder state cycling.
+            setInteger(MediaFormat.KEY_BITRATE_MODE, MediaCodecInfo.EncoderCapabilities.BITRATE_MODE_VBR)
+            // KEY_PRIORITY 1 = non-real-time: the encoder queues frames rather than resetting
+            // under load.  Priority 0 (real-time) caused continuous state-cycling
+            // (setCodecState 0→1→0→1 every ~2s) that filled the pipeline with IDR-only frames.
+            setInteger(MediaFormat.KEY_PRIORITY, 1)
+            // 1 frame of encoder latency — minimum that keeps the HW encoder stable
+            // at half resolution (540p).  Lower latency = faster frame delivery.
+            // API 30+.
             if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
-                setInteger(MediaFormat.KEY_LATENCY, 0)
+                setInteger(MediaFormat.KEY_LATENCY, 1)
             }
         }
 
@@ -186,6 +196,10 @@ class ScreenCaptureSession(
                 // codec.stop() was called while we were blocked in a native dequeue call —
                 // this is normal during shutdown; exit the loop cleanly.
                 break
+            } catch (e: Exception) {
+                // Unexpected encoder error — skip this iteration rather than crashing the
+                // service.  The encoder will recover or stop() will be called externally.
+                continue
             }
             if (outputIndex < 0) continue  // timeout or INFO_* constant — try again
 
@@ -241,10 +255,11 @@ class ScreenCaptureSession(
     }
 
     companion object {
-        /** Default encoder bitrate: 4 Mbps. */
-        const val DEFAULT_BITRATE_BPS = 2_000_000  // 2 Mbps: smaller frames = lower latency on the send path
-        /** IDR frame interval in seconds. Longer = fewer large keyframes = less bursty traffic. */
-        private const val I_FRAME_INTERVAL_SECONDS = 5
+        /** Default encoder bitrate: 1.5 Mbps — tuned for half-resolution (540p) capture at 30fps. */
+        const val DEFAULT_BITRATE_BPS = 1_500_000
+        /** IDR frame interval: 10 s. Longer intervals mean smaller mandatory IDRs and fewer
+         *  encoder resets; recovery still happens within ~10 s on reconnect. */
+        private const val I_FRAME_INTERVAL_SECONDS = 2
         /** Output buffer dequeue timeout in microseconds (10 ms). */
         private const val DEQUEUE_TIMEOUT_US = 10_000L
         private const val VIRTUAL_DISPLAY_NAME = "AirBridgeMirror"

@@ -248,10 +248,11 @@ class DeviceConnectionService @Inject constructor(
             registerSession(device.deviceId, channel)
             _establishedChannels.emit(channel)
 
-            // Drain until the channel closes (keepalive timeout / soTimeout / peer disconnect).
-            try {
-                channel.incomingMessages.collect { /* drain */ }
-            } catch (_: Exception) { }
+            // Wait for the session to close.  runMessageLoop (started by registerSession) is the
+            // sole reader of incomingMessages — we must NOT add a second .collect() here or we
+            // create two concurrent readers on the same DataInputStream, which corrupts the stream
+            // and causes immediate PONG timeouts.
+            while (channel.isConnected) { delay(200) }
 
             AirBridgeLog.info("[ConnSvc] Session dropped for ${device.deviceId}; reconnecting immediately")
         }

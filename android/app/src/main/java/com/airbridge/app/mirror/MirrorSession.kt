@@ -141,9 +141,12 @@ class MirrorSession(
                 try {
                     channel.send(ProtocolMessage(MessageType.MIRROR_FRAME, frame.toBytes()))
                 } catch (e: Exception) {
-                    AirBridgeLog.error("[Mirror:$sessionId] Frame send failed → ERROR", e)
+                    AirBridgeLog.error("[Mirror:$sessionId] Frame send failed — stopping mirror", e)
                     _stateFlow.value = MirrorState.ERROR
-                    return@collect
+                    // Throw CancellationException to break out of collect() entirely.
+                    // return@collect only skips this frame; the loop would continue sending
+                    // on the dead channel and spam the log with hundreds of exceptions.
+                    throw kotlinx.coroutines.CancellationException("Channel closed during frame send")
                 }
             }
             AirBridgeLog.info("[Mirror:$sessionId] captureSession.frames completed")

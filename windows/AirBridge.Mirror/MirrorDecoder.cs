@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Diagnostics;
 using System.Runtime.InteropServices.WindowsRuntime;
 using Windows.Graphics.Imaging;
 using Windows.Media.Core;
@@ -66,11 +67,32 @@ public sealed class MirrorDecoder : IMirrorDecoder
 
     private int  _width;
     private int  _height;
-    // Monotonic presentation timestamp for WMF: increments by 1000/fps ms per frame.
-    // We ignore Android's absolute uptime timestamps entirely — they create scheduling
-    // problems in WMF's internal clock and are not needed for a live-mirror (no A/V sync).
-    private long _nextTimestampMs = 0;
-    private const long FrameIntervalMs = 1000 / 30; // 33ms @ 30fps
+
+    // ── Timestamp strategy ──────────────────────────────────────────────────
+    // Use wall-clock arrival time, normalized to the first IDR keyframe = 0ms.
+    //
+    // Why not encoder PTS: the Snapdragon encoder resets PTS to 0 on each cycling
+    // restart, and frames burst off in clusters — PTS values are meaningless for
+    // scheduling live content.
+    //
+    // Why not raw Stopwatch from construction: the decoder is created before the
+    // mirror session starts.  The first IDR might arrive 146 s later (ts=146371ms).
+    // WMF's MediaPlayer clock starts at 0 on Play() and advances in real time —
+    // a sample at ts=146371ms wouldn't be shown for 146 seconds.
+    //
+    // Solution: record the Stopwatch value at the first IDR and subtract it from
+    // every subsequent timestamp.  First IDR = ts 0ms, frames after it = elapsed
+    // ms since that IDR.  WMF shows the first IDR immediately and subsequent frames
+    // at their natural arrival cadence — no scheduling wait, no stuck frames.
+    private readonly Stopwatch _arrivalClock    = Stopwatch.StartNew();
+    private          long      _firstIdrMs      = -1L;   // Stopwatch ms at first IDR
+    private          long      _lastDeliveredMs = -1L;
+
+    // ── Frame-drop threshold ────────────────────────────────────────────────
+    // Keep a small queue (4 frames ≈ 133 ms at 30 fps).  With wall-clock
+    // timestamps every frame is immediately due, so a large queue would only
+    // cause WMF to blast through stale frames before showing live content.
+    private const int MaxQueueDepth = 4;
 
     // ── Initialization ─────────────────────────────────────────────────────
 
@@ -116,8 +138,7 @@ public sealed class MirrorDecoder : IMirrorDecoder
         if (nalData is null || nalData.Length == 0)
             return Task.CompletedTask;
 
-        // Android timestamps are ignored — WMF uses a monotonic counter instead (see _nextTimestampMs).
-        SubmitNalUnit(nalData, 0, isKeyFrame);
+        SubmitNalUnit(nalData, timestampUs, isKeyFrame);
         return Task.CompletedTask;
     }
 
@@ -128,14 +149,14 @@ public sealed class MirrorDecoder : IMirrorDecoder
     /// Non-keyframe NAL units before the first keyframe are dropped.
     /// </summary>
     /// <param name="nalData">Raw H.264 NAL bytes.</param>
-    /// <param name="timestampMs">Presentation timestamp in milliseconds.</param>
+    /// <param name="timestampUs">Presentation timestamp in microseconds (from the encoder).</param>
     /// <param name="isKeyFrame"><c>true</c> if this is an IDR (keyframe) NAL unit.</param>
     /// <returns>
     /// <see cref="DecodeResult.Success"/> when the NAL unit was accepted;
     /// a failure result when it was dropped (pre-keyframe non-key NAL) or the
     /// decoder is not yet initialized.
     /// </returns>
-    public DecodeResult SubmitNalUnit(byte[] nalData, long timestampMs, bool isKeyFrame)
+    public DecodeResult SubmitNalUnit(byte[] nalData, long timestampUs, bool isKeyFrame)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
         if (!_initialized)
@@ -151,8 +172,44 @@ public sealed class MirrorDecoder : IMirrorDecoder
             AirBridge.Core.AppLog.Info($"[MirrorDecoder] First IDR keyframe queued ({nalData.Length}B)");
         }
 
-        _nalQueue.Enqueue(new PendingNal(nalData, timestampMs, isKeyFrame));
+        // On IDR: flush any queued frames — stale content from before this keyframe.
+        if (isKeyFrame && _seenKeyFrame)
+        {
+            int stale = 0;
+            while (_nalQueue.TryDequeue(out _)) stale++;
+            for (int i = 0; i < stale; i++) _nalReady.Wait(0);
+            if (stale > 0)
+                AirBridge.Core.AppLog.Info($"[MirrorDecoder] IDR: flushed {stale} stale frames");
+        }
+
+        // Anchor the clock to the first IDR so ts=0 aligns with when WMF's
+        // MediaPlayer starts playing, regardless of when the decoder was created.
+        var absoluteMs = _arrivalClock.ElapsedMilliseconds;
+        if (isKeyFrame && _firstIdrMs < 0)
+            _firstIdrMs = absoluteMs;
+
+        var arrivalMs = _firstIdrMs < 0
+            ? 0L
+            : absoluteMs - _firstIdrMs;
+
+        if (arrivalMs <= _lastDeliveredMs) arrivalMs = _lastDeliveredMs + 1L;
+        _lastDeliveredMs = arrivalMs;
+
+        _nalQueue.Enqueue(new PendingNal(nalData, arrivalMs, isKeyFrame));
         _nalReady.Release();
+
+        // Drop oldest non-IDR frames when the queue grows too deep.
+        if (_nalQueue.Count > MaxQueueDepth)
+        {
+            int dropped = 0;
+            while (_nalQueue.Count > MaxQueueDepth &&
+                   _nalQueue.TryPeek(out var oldest) && !oldest.IsKeyFrame)
+            {
+                if (_nalQueue.TryDequeue(out _)) dropped++;
+            }
+            for (int i = 0; i < dropped; i++) _nalReady.Wait(0);
+        }
+
         return DecodeResult.Success;
     }
 
@@ -194,8 +251,7 @@ public sealed class MirrorDecoder : IMirrorDecoder
                     return;
                 }
 
-                var ts     = TimeSpan.FromMilliseconds(_nextTimestampMs);
-                _nextTimestampMs += FrameIntervalMs;
+                var ts     = TimeSpan.FromMilliseconds(nal.TimestampMs);
                 var buffer = nal.NalData.AsBuffer();
                 var sample = MediaStreamSample.CreateFromBuffer(buffer, ts);
                 sample.KeyFrame = nal.IsKeyFrame;

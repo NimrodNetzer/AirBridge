@@ -116,8 +116,13 @@ class PhoneCaptureService : Service() {
         @Suppress("DEPRECATION")
         windowManager.defaultDisplay.getRealMetrics(metrics)
 
-        val width     = metrics.widthPixels
-        val height    = metrics.heightPixels
+        // Capture at half the screen resolution so the Qualcomm hardware encoder
+        // doesn't saturate and cycle.  Full-res (1080×2340) causes the Snapdragon
+        // encoder to burst ~80 frames then reset for 28+ seconds; half-res (540×1168)
+        // keeps it in continuous steady-state at 30 fps.
+        // Align each dimension to 16px (H.264 macroblock boundary) to avoid gray rows.
+        val width     = ((metrics.widthPixels  / 2) + 15) and 15.inv()
+        val height    = ((metrics.heightPixels / 2) + 15) and 15.inv()
         val dpi       = metrics.densityDpi
         val fps       = TARGET_FPS
         val sessionId = UUID.randomUUID().toString()
