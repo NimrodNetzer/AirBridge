@@ -101,16 +101,15 @@ class PhoneCaptureService : Service() {
      * frames into a [MirrorSession] on the active channel for [deviceId].
      */
     private fun beginCapture(resultCode: Int, data: Intent, deviceId: String) {
+        // Android 14+ requires the foreground service type to be MEDIA_PROJECTION
+        // BEFORE calling getMediaProjection() — not after.  Upgrade the type here,
+        // before acquiring the token, so the OS constraint is satisfied.
+        startForegroundCompat()
+
         val projectionManager =
             getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
         val projection: MediaProjection =
             projectionManager.getMediaProjection(resultCode, data)
-
-        // Now that we hold a valid MediaProjection token, upgrade the foreground service type
-        // to FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION.  Android 14+ requires the token to
-        // exist before this type can be declared; calling it here (not in onCreate) satisfies
-        // that constraint.
-        startForegroundCompat()
 
         val windowManager = getSystemService(Context.WINDOW_SERVICE) as WindowManager
         val metrics = DisplayMetrics()
