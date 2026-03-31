@@ -112,7 +112,7 @@ class TransferViewModel @Inject constructor(
         viewModelScope.launch {
             deviceConnectionService.connectionFailedEvent.collect { deviceId ->
                 _connectionErrorMessage.value =
-                    "Could not connect to device "$deviceId". Check that the PC is reachable."
+                    "Could not connect to device \u201c$deviceId\u201d. Check that the PC is reachable."
             }
         }
     }
@@ -191,7 +191,7 @@ class TransferViewModel @Inject constructor(
 
             session.stateFlow.collect { state ->
                 val errMsg = if (state == TransferState.FAILED)
-                    "Transfer of "${session.fileName}" failed. Tap Retry to try again."
+                    "Transfer of \u201c${session.fileName}\u201d failed. Tap Retry to try again."
                 else null
                 updateSessionState(session.sessionId, state, errMsg)
                 when (state) {

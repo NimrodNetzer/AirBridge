@@ -66,7 +66,7 @@ class DevicesViewModel @Inject constructor(
         viewModelScope.launch {
             deviceConnectionService.connectionFailedEvent.collect { deviceId ->
                 _connectionErrorMessage.value =
-                    "Could not connect to "$deviceId". Check that the PC is reachable."
+                    "Could not connect to \u201c$deviceId\u201d. Check that the PC is reachable."
             }
         }
         // Auto-start scanning so the user sees devices without tapping the search icon.
