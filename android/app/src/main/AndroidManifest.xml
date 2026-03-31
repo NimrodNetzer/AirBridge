@@ -110,7 +110,7 @@
         <service
             android:name=".mirror.PhoneCaptureService"
             android:exported="false"
-            android:foregroundServiceType="mediaProjection" />
+            android:foregroundServiceType="mediaProjection|dataSync" />
 
     </application>
 

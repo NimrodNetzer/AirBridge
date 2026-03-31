@@ -58,11 +58,14 @@ class PhoneCaptureService : Service() {
         super.onCreate()
         createNotificationChannel()
         // Satisfy Android's 5-second startForeground() requirement immediately in onCreate.
-        // We intentionally do NOT specify FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION here:
-        // Android 14+ rejects that type unless a valid MediaProjection token already exists,
-        // which we don't have yet at onCreate time.  We upgrade to the proper type inside
-        // beginCapture() once the token has been obtained from the user.
-        startForeground(NOTIFICATION_ID, buildNotification())
+        // Use DATA_SYNC type here — we don't have a MediaProjection token yet, so we cannot
+        // declare MEDIA_PROJECTION type until beginCapture() obtains it from the user.
+        // Both types are declared in the manifest so the upgrade in beginCapture() is valid.
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            startForeground(NOTIFICATION_ID, buildNotification(), ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
+        } else {
+            startForeground(NOTIFICATION_ID, buildNotification())
+        }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
