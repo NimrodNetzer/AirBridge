@@ -11,9 +11,12 @@ jobs:
     runs-on: macos-14
     steps:
       - uses: actions/checkout@v4
+
       - name: Select Xcode
         run: sudo xcode-select -s /Applications/Xcode_15.4.app
-      - name: Build (no signing)
+
+      # Verify the project builds cleanly against the simulator (fast, no signing needed)
+      - name: Build for simulator (CI check)
         run: |
           xcodebuild \
             -project ios/AirBridge.xcodeproj \
@@ -22,19 +25,33 @@ jobs:
             -configuration Debug \
             CODE_SIGNING_ALLOWED=NO \
             build
-      - name: Archive for sideloading
-        if: github.ref == 'refs/heads/dev' || github.ref == 'refs/heads/main'
+
+      # Archive for a real device (unsigned — Sideloadly will sign it with your Apple ID)
+      - name: Archive (unsigned, for sideloading)
         run: |
           xcodebuild \
             -project ios/AirBridge.xcodeproj \
             -scheme AirBridge \
-            -archivePath build/AirBridge.xcarchive \
+            -destination 'generic/platform=iOS' \
+            -archivePath $RUNNER_TEMP/AirBridge.xcarchive \
             -configuration Release \
             CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
             archive
-      - name: Upload IPA artifact
-        if: github.ref == 'refs/heads/dev' || github.ref == 'refs/heads/main'
+
+      # Package the .app into a standard .ipa that Sideloadly / AltStore can sign
+      - name: Package .ipa
+        run: |
+          mkdir -p $RUNNER_TEMP/ipa/Payload
+          cp -R "$RUNNER_TEMP/AirBridge.xcarchive/Products/Applications/AirBridge.app" \
+                "$RUNNER_TEMP/ipa/Payload/"
+          cd $RUNNER_TEMP/ipa
+          zip -r AirBridge.ipa Payload/
+
+      # Upload — download from the Actions run page on GitHub
+      - name: Upload AirBridge.ipa
         uses: actions/upload-artifact@v4
         with:
           name: AirBridge-iOS
-          path: build/AirBridge.xcarchive
+          path: ${{ runner.temp }}/ipa/AirBridge.ipa
+          retention-days: 30
