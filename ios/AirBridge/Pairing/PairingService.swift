@@ -36,12 +36,9 @@ final class PairingService {
         let privateKey = try keychainStore.getOrCreatePrivateKey()
         let publicKey = privateKey.publicKey.rawRepresentation
 
-        // Build PAIRING_REQUEST payload.
-        // payload[0] = type byte, then the PairingRequestPayload bytes.
+        // Build PAIRING_REQUEST payload (no type byte — ProtocolMessage carries the type).
         let requestBody = PairingRequestPayload(publicKey: publicKey, pin: pin)
-        var payloadData = Data()
-        payloadData.append(MessageType.pairingRequest.rawValue) // type byte at [0]
-        payloadData.append(requestBody.toPayload())
+        let payloadData = requestBody.toPayload()
 
         let message = ProtocolMessage(type: .pairingRequest, payload: payloadData)
         try await channel.send(message)
@@ -51,11 +48,7 @@ final class PairingService {
             let incoming = try await channel.receiveOne()
             guard incoming.type == .pairingResponse else { continue }
 
-            // payload[0] is the type byte — skip it.
-            let responseData = incoming.payload.count > 1
-                ? Data(incoming.payload[1...])
-                : Data()
-            let response = try PairingResponsePayload.fromPayload(responseData)
+            let response = try PairingResponsePayload.fromPayload(incoming.payload)
             if response.accepted {
                 try keychainStore.storePeerKey(response.publicKey, for: deviceId)
             }
