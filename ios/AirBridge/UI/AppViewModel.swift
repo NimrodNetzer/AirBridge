@@ -62,6 +62,15 @@ final class AppViewModel: ObservableObject {
 
     /// Initiates a connection to the selected device, running the full
     /// handshake + pairing flow, then handing off to a TabletDisplaySession.
+    func connectManually(host: String, port: UInt16) {
+        let endpoint = NWEndpoint.hostPort(
+            host: NWEndpoint.Host(host),
+            port: NWEndpoint.Port(rawValue: port)!
+        )
+        let device = DiscoveredDevice(id: host, name: host, endpoint: endpoint)
+        connect(to: device)
+    }
+
     func connect(to device: DiscoveredDevice) {
         connectTask?.cancel()
         connectTask = Task {

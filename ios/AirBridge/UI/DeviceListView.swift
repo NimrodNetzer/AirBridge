@@ -3,6 +3,8 @@ import SwiftUI
 /// Shows a list of discovered Windows AirBridge hosts on the local network.
 struct DeviceListView: View {
     @EnvironmentObject var viewModel: AppViewModel
+    @State private var manualIP: String = ""
+    @State private var showManualConnect = false
 
     var body: some View {
         NavigationView {
@@ -43,6 +45,31 @@ struct DeviceListView: View {
                 .multilineTextAlignment(.center)
                 .foregroundColor(.secondary)
                 .padding(.horizontal)
+            manualConnectSection
+        }
+    }
+
+    private var manualConnectSection: some View {
+        VStack(spacing: 12) {
+            Divider().padding(.horizontal)
+            Text("Can't find your PC? Enter its IP address manually.")
+                .font(.caption)
+                .foregroundColor(.secondary)
+                .multilineTextAlignment(.center)
+                .padding(.horizontal)
+            HStack(spacing: 8) {
+                TextField("e.g. 192.168.1.100", text: $manualIP)
+                    .textFieldStyle(.roundedBorder)
+                    .keyboardType(.numbersAndPunctuation)
+                    .autocorrectionDisabled()
+                    .textInputAutocapitalization(.never)
+                Button("Connect") {
+                    viewModel.connectManually(host: manualIP, port: 47821)
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(manualIP.isEmpty || viewModel.connectionState != .idle)
+            }
+            .padding(.horizontal)
         }
     }
 

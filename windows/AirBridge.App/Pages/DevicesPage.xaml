@@ -135,11 +135,20 @@
         </ListView>
 
         <!-- Bottom status bar -->
-        <TextBlock Grid.Row="4"
-                   Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                   Style="{StaticResource CaptionTextBlockStyle}">
-            <Run Text="{x:Bind ViewModel.Devices.Count, Mode=OneWay}"/>
-            <Run Text=" device(s) found"/>
-        </TextBlock>
+        <StackPanel Grid.Row="4" Spacing="4">
+            <TextBlock Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                       Style="{StaticResource CaptionTextBlockStyle}">
+                <Run Text="{x:Bind ViewModel.Devices.Count, Mode=OneWay}"/>
+                <Run Text=" device(s) found"/>
+            </TextBlock>
+            <TextBlock Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                       Style="{StaticResource CaptionTextBlockStyle}">
+                <Run Text="This PC's IP address: "/>
+                <Run Text="{x:Bind ViewModel.LocalIpAddress}"
+                     FontWeight="SemiBold"
+                     Foreground="{ThemeResource TextFillColorPrimaryBrush}"/>
+                <Run Text=" — enter this on your iPad if auto-discovery doesn't work"/>
+            </TextBlock>
+        </StackPanel>
     </Grid>
 </Page>

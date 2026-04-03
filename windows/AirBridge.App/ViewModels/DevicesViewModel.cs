@@ -3,6 +3,8 @@ using AirBridge.Core.Models;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using System.Collections.ObjectModel;
+using System.Net;
+using System.Net.Sockets;
 
 namespace AirBridge.App.ViewModels;
 
@@ -62,6 +64,20 @@ public sealed partial class DevicesViewModel : ObservableObject
 
     [ObservableProperty]
     private bool _hasError;
+
+    /// <summary>The local IP address of this PC on the LAN, shown so the user can enter it on the iPad.</summary>
+    public string LocalIpAddress { get; } = GetLocalIp();
+
+    private static string GetLocalIp()
+    {
+        try
+        {
+            using var socket = new Socket(AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp);
+            socket.Connect("8.8.8.8", 80);
+            return (socket.LocalEndPoint as IPEndPoint)?.Address.ToString() ?? "Unknown";
+        }
+        catch { return "Unknown"; }
+    }
 
     [ObservableProperty]
     private string _errorMessage = string.Empty;
