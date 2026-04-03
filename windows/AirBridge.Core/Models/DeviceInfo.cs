@@ -6,7 +6,8 @@ public enum DeviceType
     Unknown,
     WindowsPc,
     AndroidPhone,
-    AndroidTablet
+    AndroidTablet,
+    iPad
 }
 
 /// <summary>Represents a discovered or paired remote device.</summary>

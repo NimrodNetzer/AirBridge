@@ -313,6 +313,8 @@ public sealed class TlsConnectionManager : IConnectionManager
                         AirBridge.Core.AppLog.Warn($"[TlsConnMgr] HANDSHAKE deviceId was empty — keeping placeholder {channel.RemoteDeviceId}");
                     }
                 }
+                if (doc.RootElement.TryGetProperty("deviceType", out var typeProp))
+                    channel.RemoteDeviceType = typeProp.GetString() ?? string.Empty;
                 else
                 {
                     AirBridge.Core.AppLog.Warn($"[TlsConnMgr] HANDSHAKE JSON missing 'deviceId' field — keeping placeholder {channel.RemoteDeviceId}; json={json}");

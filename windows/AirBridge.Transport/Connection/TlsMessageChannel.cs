@@ -60,6 +60,9 @@ public sealed class TlsMessageChannel : IMessageChannel
     public string RemoteDeviceId { get; internal set; }
 
     /// <inheritdoc/>
+    public string RemoteDeviceType { get; internal set; } = string.Empty;
+
+    /// <inheritdoc/>
     public bool IsConnected => _connected;
 
     /// <inheritdoc/>

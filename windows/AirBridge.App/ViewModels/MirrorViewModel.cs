@@ -63,7 +63,13 @@ public sealed partial class MirrorViewModel : ObservableObject, IDisposable
     }
 
     private void OnDeviceConnected(object? sender, string deviceId)
-        => _dispatcher.TryEnqueue(() => ActivateDevice(deviceId));
+        => _dispatcher.TryEnqueue(async () =>
+        {
+            ActivateDevice(deviceId);
+            // iPad connects as receiver — auto-start tablet display so it gets the stream immediately.
+            if (_connectedDevice?.DeviceType == DeviceType.iPad && !IsMirroring)
+                await StartSessionAsync(MirrorMode.TabletDisplay);
+        });
 
     private void OnAndroidMirrorStartRequested(object? sender, AirBridge.App.Services.AndroidMirrorStartArgs args)
         => _dispatcher.TryEnqueue(async () =>
@@ -94,7 +100,7 @@ public sealed partial class MirrorViewModel : ObservableObject, IDisposable
         var channel = _connection.GetActiveSession(deviceId);
         if (channel is null) return;
         var device = _registry.GetAllDevices().FirstOrDefault(d => d.DeviceId == deviceId)
-                     ?? new DeviceInfo(deviceId, deviceId, DeviceType.AndroidPhone, string.Empty, 0, false);
+                     ?? new DeviceInfo(deviceId, deviceId, DeviceType.Unknown, string.Empty, 0, false);
         _channel         = channel;
         _connectedDevice = device;
         IsConnected      = true;
@@ -136,12 +142,16 @@ public sealed partial class MirrorViewModel : ObservableObject, IDisposable
             // Register the session's inbound message handler so DeviceConnectionService
             // (the sole channel reader) routes MirrorFrame / MirrorStop messages here,
             // avoiding a concurrent SslStream read which throws NotSupportedException.
-            if (_activeSession is AirBridge.Mirror.MirrorSession mirrorSession &&
-                _connectedDevice is not null)
+            if (_connectedDevice is not null)
             {
                 _mirrorDeviceId = _connectedDevice.DeviceId;
-                _mirrorHandler  = mirrorSession.CreateMessageHandler();
-                _connection.AddMessageHandler(_mirrorDeviceId, _mirrorHandler);
+                if (_activeSession is AirBridge.Mirror.MirrorSession mirrorSession)
+                    _mirrorHandler = mirrorSession.CreateMessageHandler();
+                else if (_activeSession is AirBridge.Mirror.TabletDisplaySession tabletSession)
+                    _mirrorHandler = tabletSession.CreateMessageHandler(
+                        onStop: () => { _dispatcher.TryEnqueue(async () => await StopAsync()); return Task.CompletedTask; });
+                if (_mirrorHandler is not null)
+                    _connection.AddMessageHandler(_mirrorDeviceId, _mirrorHandler);
             }
 
             StatusMessage = "Active";

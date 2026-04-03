@@ -10,6 +10,8 @@ namespace AirBridge.Transport.Interfaces;
 public interface IMessageChannel : IAsyncDisposable
 {
     string RemoteDeviceId { get; }
+    /// <summary>Device type string from the HANDSHAKE payload (e.g. "android", "ipad", "windows_pc").</summary>
+    string RemoteDeviceType { get; }
     bool IsConnected { get; }
 
     /// <summary>Sends a protocol message. Thread-safe.</summary>

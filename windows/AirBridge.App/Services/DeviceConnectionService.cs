@@ -502,10 +502,17 @@ public sealed class DeviceConnectionService : IDisposable
 
             await _pairing.StorePeerKeyAsync(remoteId, remoteKey).ConfigureAwait(false);
 
+            var deviceType = channel.RemoteDeviceType switch
+            {
+                "ipad"          => AirBridge.Core.Models.DeviceType.iPad,
+                "android"       => AirBridge.Core.Models.DeviceType.AndroidPhone,
+                "android_tablet"=> AirBridge.Core.Models.DeviceType.AndroidTablet,
+                _               => AirBridge.Core.Models.DeviceType.Unknown
+            };
             var device = new AirBridge.Core.Models.DeviceInfo(
                 DeviceId:   remoteId,
                 DeviceName: remoteId,
-                DeviceType: AirBridge.Core.Models.DeviceType.Unknown,
+                DeviceType: deviceType,
                 IpAddress:  string.Empty,
                 Port:       0,
                 IsPaired:   true);
