@@ -69,10 +69,13 @@ actor AirBridgeChannel {
     /// Connects to the remote endpoint. Throws on failure or timeout (10 s).
     func connect() async throws {
         try await withCheckedThrowingContinuation { (cont: CheckedContinuation<Void, Error>) in
-            var resumed = false
+            // Use a class wrapper so concurrent closures can share mutable state safely.
+            final class Once: @unchecked Sendable { var done = false }
+            let once = Once()
+
             let timeoutItem = DispatchWorkItem {
-                guard !resumed else { return }
-                resumed = true
+                guard !once.done else { return }
+                once.done = true
                 self.connection.cancel()
                 cont.resume(throwing: AirBridgeError.timeout)
             }
@@ -82,18 +85,18 @@ actor AirBridgeChannel {
                 switch state {
                 case .ready:
                     timeoutItem.cancel()
-                    guard !resumed else { return }
-                    resumed = true
+                    guard !once.done else { return }
+                    once.done = true
                     cont.resume()
                 case .failed(let error):
                     timeoutItem.cancel()
-                    guard !resumed else { return }
-                    resumed = true
+                    guard !once.done else { return }
+                    once.done = true
                     cont.resume(throwing: AirBridgeError.connectionFailed(error.localizedDescription))
                 case .cancelled:
                     timeoutItem.cancel()
-                    guard !resumed else { return }
-                    resumed = true
+                    guard !once.done else { return }
+                    once.done = true
                     cont.resume(throwing: AirBridgeError.connectionFailed("Connection cancelled"))
                 default:
                     break

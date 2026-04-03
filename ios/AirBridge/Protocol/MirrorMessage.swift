@@ -120,19 +120,19 @@ extension Data {
     }
 
     func readInt32BE(at offset: Int) -> Int32 {
-        var value: Int32 = 0
-        withUnsafeMutableBytes(of: &value) { (dst: UnsafeMutableRawBufferPointer) in
-            dst.copyBytes(from: self[offset..<(offset + 4)])
-        }
-        return Int32(bigEndian: value)
+        let b = self
+        let v = (Int32(b[offset]) << 24) | (Int32(b[offset+1]) << 16)
+              | (Int32(b[offset+2]) << 8)  |  Int32(b[offset+3])
+        return v
     }
 
     func readInt64BE(at offset: Int) -> Int64 {
-        var value: Int64 = 0
-        withUnsafeMutableBytes(of: &value) { (dst: UnsafeMutableRawBufferPointer) in
-            dst.copyBytes(from: self[offset..<(offset + 8)])
-        }
-        return Int64(bigEndian: value)
+        let b = self
+        let v = (Int64(b[offset])   << 56) | (Int64(b[offset+1]) << 48)
+              | (Int64(b[offset+2]) << 40) | (Int64(b[offset+3]) << 32)
+              | (Int64(b[offset+4]) << 24) | (Int64(b[offset+5]) << 16)
+              | (Int64(b[offset+6]) <<  8) |  Int64(b[offset+7])
+        return v
     }
 }
 

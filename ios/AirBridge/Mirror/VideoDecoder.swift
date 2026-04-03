@@ -60,7 +60,7 @@ final class VideoDecoder {
             pps.withUnsafeBytes { ppsPtr in
                 guard let spsBase = spsPtr.baseAddress,
                       let ppsBase = ppsPtr.baseAddress else { return }
-                var paramPtrs: [UnsafePointer<UInt8>?] = [
+                var paramPtrs: [UnsafePointer<UInt8>] = [
                     spsBase.assumingMemoryBound(to: UInt8.self),
                     ppsBase.assumingMemoryBound(to: UInt8.self)
                 ]
