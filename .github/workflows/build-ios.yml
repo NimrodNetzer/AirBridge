@@ -1,0 +1,57 @@
+name: Build iOS
+on:
+  push:
+    branches: ['feature/ipad-display', 'dev', 'main']
+    paths: ['ios/**']
+  pull_request:
+    paths: ['ios/**']
+
+jobs:
+  build:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select Xcode
+        run: sudo xcode-select -s /Applications/Xcode_15.4.app
+
+      # Verify the project builds cleanly against the simulator (fast, no signing needed)
+      - name: Build for simulator (CI check)
+        run: |
+          xcodebuild \
+            -project ios/AirBridge.xcodeproj \
+            -scheme AirBridge \
+            -destination 'platform=iOS Simulator,name=iPad Pro 13-inch (M4)' \
+            -configuration Debug \
+            CODE_SIGNING_ALLOWED=NO \
+            build
+
+      # Archive for a real device (unsigned — Sideloadly will sign it with your Apple ID)
+      - name: Archive (unsigned, for sideloading)
+        run: |
+          xcodebuild \
+            -project ios/AirBridge.xcodeproj \
+            -scheme AirBridge \
+            -destination 'generic/platform=iOS' \
+            -archivePath $RUNNER_TEMP/AirBridge.xcarchive \
+            -configuration Release \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            archive
+
+      # Package the .app into a standard .ipa that Sideloadly / AltStore can sign
+      - name: Package .ipa
+        run: |
+          mkdir -p $RUNNER_TEMP/ipa/Payload
+          cp -R "$RUNNER_TEMP/AirBridge.xcarchive/Products/Applications/AirBridge.app" \
+                "$RUNNER_TEMP/ipa/Payload/"
+          cd $RUNNER_TEMP/ipa
+          zip -r AirBridge.ipa Payload/
+
+      # Upload — download from the Actions run page on GitHub
+      - name: Upload AirBridge.ipa
+        uses: actions/upload-artifact@v4
+        with:
+          name: AirBridge-iOS
+          path: ${{ runner.temp }}/ipa/AirBridge.ipa
+          retention-days: 30

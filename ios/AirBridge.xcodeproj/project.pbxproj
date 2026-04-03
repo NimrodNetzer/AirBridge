@@ -1,0 +1,478 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 56;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		AA000101000000000000001 /* AirBridgeApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA000201000000000000001 /* AirBridgeApp.swift */; };
+		AA000101000000000000002 /* MessageType.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA000201000000000000002 /* MessageType.swift */; };
+		AA000101000000000000003 /* ProtocolMessage.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA000201000000000000003 /* ProtocolMessage.swift */; };
+		AA000101000000000000004 /* HandshakeMessage.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA000201000000000000004 /* HandshakeMessage.swift */; };
+		AA000101000000000000005 /* MirrorMessage.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA000201000000000000005 /* MirrorMessage.swift */; };
+		AA000101000000000000006 /* InputEventMessage.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA000201000000000000006 /* InputEventMessage.swift */; };
+		AA000101000000000000007 /* PairingMessage.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA000201000000000000007 /* PairingMessage.swift */; };
+		AA000101000000000000008 /* AirBridgeChannel.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA000201000000000000008 /* AirBridgeChannel.swift */; };
+		AA000101000000000000009 /* DiscoveryService.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA000201000000000000009 /* DiscoveryService.swift */; };
+		AA00010100000000000000A /* KeychainStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA00020100000000000000A /* KeychainStore.swift */; };
+		AA00010100000000000000B /* PairingService.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA00020100000000000000B /* PairingService.swift */; };
+		AA00010100000000000000C /* VideoDecoder.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA00020100000000000000C /* VideoDecoder.swift */; };
+		AA00010100000000000000D /* TabletDisplaySession.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA00020100000000000000D /* TabletDisplaySession.swift */; };
+		AA00010100000000000000E /* AppViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA00020100000000000000E /* AppViewModel.swift */; };
+		AA00010100000000000000F /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA00020100000000000000F /* ContentView.swift */; };
+		AA000101000000000000010 /* DeviceListView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA000201000000000000010 /* DeviceListView.swift */; };
+		AA000101000000000000011 /* PairingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA000201000000000000011 /* PairingView.swift */; };
+		AA000101000000000000012 /* DisplayView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA000201000000000000012 /* DisplayView.swift */; };
+		AA000101000000000000013 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = AA000201000000000000013 /* Assets.xcassets */; };
+		/* Frameworks */
+		AA000101000000000000020 /* Foundation.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = AA000201000000000000020 /* Foundation.framework */; };
+		AA000101000000000000021 /* Network.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = AA000201000000000000021 /* Network.framework */; };
+		AA000101000000000000022 /* Security.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = AA000201000000000000022 /* Security.framework */; };
+		AA000101000000000000023 /* AVFoundation.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = AA000201000000000000023 /* AVFoundation.framework */; };
+		AA000101000000000000024 /* VideoToolbox.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = AA000201000000000000024 /* VideoToolbox.framework */; };
+		AA000101000000000000025 /* CoreMedia.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = AA000201000000000000025 /* CoreMedia.framework */; };
+		AA000101000000000000026 /* CoreVideo.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = AA000201000000000000026 /* CoreVideo.framework */; };
+		AA000101000000000000027 /* UIKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = AA000201000000000000027 /* UIKit.framework */; };
+		AA000101000000000000028 /* SwiftUI.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = AA000201000000000000028 /* SwiftUI.framework */; };
+		AA000101000000000000029 /* Combine.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = AA000201000000000000029 /* Combine.framework */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		AA000201000000000000001 /* AirBridgeApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AirBridgeApp.swift; sourceTree = "<group>"; };
+		AA000201000000000000002 /* MessageType.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MessageType.swift; sourceTree = "<group>"; };
+		AA000201000000000000003 /* ProtocolMessage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProtocolMessage.swift; sourceTree = "<group>"; };
+		AA000201000000000000004 /* HandshakeMessage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HandshakeMessage.swift; sourceTree = "<group>"; };
+		AA000201000000000000005 /* MirrorMessage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MirrorMessage.swift; sourceTree = "<group>"; };
+		AA000201000000000000006 /* InputEventMessage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InputEventMessage.swift; sourceTree = "<group>"; };
+		AA000201000000000000007 /* PairingMessage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PairingMessage.swift; sourceTree = "<group>"; };
+		AA000201000000000000008 /* AirBridgeChannel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AirBridgeChannel.swift; sourceTree = "<group>"; };
+		AA000201000000000000009 /* DiscoveryService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiscoveryService.swift; sourceTree = "<group>"; };
+		AA00020100000000000000A /* KeychainStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeychainStore.swift; sourceTree = "<group>"; };
+		AA00020100000000000000B /* PairingService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PairingService.swift; sourceTree = "<group>"; };
+		AA00020100000000000000C /* VideoDecoder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VideoDecoder.swift; sourceTree = "<group>"; };
+		AA00020100000000000000D /* TabletDisplaySession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TabletDisplaySession.swift; sourceTree = "<group>"; };
+		AA00020100000000000000E /* AppViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppViewModel.swift; sourceTree = "<group>"; };
+		AA00020100000000000000F /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
+		AA000201000000000000010 /* DeviceListView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeviceListView.swift; sourceTree = "<group>"; };
+		AA000201000000000000011 /* PairingView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PairingView.swift; sourceTree = "<group>"; };
+		AA000201000000000000012 /* DisplayView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DisplayView.swift; sourceTree = "<group>"; };
+		AA000201000000000000013 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		AA000201000000000000014 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		AA000201000000000000015 /* AirBridge.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = AirBridge.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		/* Frameworks */
+		AA000201000000000000020 /* Foundation.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Foundation.framework; path = System/Library/Frameworks/Foundation.framework; sourceTree = SDKROOT; };
+		AA000201000000000000021 /* Network.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Network.framework; path = System/Library/Frameworks/Network.framework; sourceTree = SDKROOT; };
+		AA000201000000000000022 /* Security.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Security.framework; path = System/Library/Frameworks/Security.framework; sourceTree = SDKROOT; };
+		AA000201000000000000023 /* AVFoundation.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = AVFoundation.framework; path = System/Library/Frameworks/AVFoundation.framework; sourceTree = SDKROOT; };
+		AA000201000000000000024 /* VideoToolbox.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = VideoToolbox.framework; path = System/Library/Frameworks/VideoToolbox.framework; sourceTree = SDKROOT; };
+		AA000201000000000000025 /* CoreMedia.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = CoreMedia.framework; path = System/Library/Frameworks/CoreMedia.framework; sourceTree = SDKROOT; };
+		AA000201000000000000026 /* CoreVideo.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = CoreVideo.framework; path = System/Library/Frameworks/CoreVideo.framework; sourceTree = SDKROOT; };
+		AA000201000000000000027 /* UIKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = UIKit.framework; path = System/Library/Frameworks/UIKit.framework; sourceTree = SDKROOT; };
+		AA000201000000000000028 /* SwiftUI.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = SwiftUI.framework; path = System/Library/Frameworks/SwiftUI.framework; sourceTree = SDKROOT; };
+		AA000201000000000000029 /* Combine.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Combine.framework; path = System/Library/Frameworks/Combine.framework; sourceTree = SDKROOT; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		AA000301000000000000001 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				AA000101000000000000020 /* Foundation.framework in Frameworks */,
+				AA000101000000000000021 /* Network.framework in Frameworks */,
+				AA000101000000000000022 /* Security.framework in Frameworks */,
+				AA000101000000000000023 /* AVFoundation.framework in Frameworks */,
+				AA000101000000000000024 /* VideoToolbox.framework in Frameworks */,
+				AA000101000000000000025 /* CoreMedia.framework in Frameworks */,
+				AA000101000000000000026 /* CoreVideo.framework in Frameworks */,
+				AA000101000000000000027 /* UIKit.framework in Frameworks */,
+				AA000101000000000000028 /* SwiftUI.framework in Frameworks */,
+				AA000101000000000000029 /* Combine.framework in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		AA000401000000000000001 /* Root */ = {
+			isa = PBXGroup;
+			children = (
+				AA000401000000000000002 /* AirBridge */,
+				AA000401000000000000009 /* Frameworks */,
+				AA000401000000000000010 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		AA000401000000000000002 /* AirBridge */ = {
+			isa = PBXGroup;
+			children = (
+				AA000201000000000000001 /* AirBridgeApp.swift */,
+				AA000201000000000000013 /* Assets.xcassets */,
+				AA000201000000000000014 /* Info.plist */,
+				AA000401000000000000003 /* Protocol */,
+				AA000401000000000000004 /* Transport */,
+				AA000401000000000000005 /* Pairing */,
+				AA000401000000000000006 /* Mirror */,
+				AA000401000000000000007 /* UI */,
+			);
+			path = AirBridge;
+			sourceTree = "<group>";
+		};
+		AA000401000000000000003 /* Protocol */ = {
+			isa = PBXGroup;
+			children = (
+				AA000201000000000000002 /* MessageType.swift */,
+				AA000201000000000000003 /* ProtocolMessage.swift */,
+				AA000201000000000000004 /* HandshakeMessage.swift */,
+				AA000201000000000000005 /* MirrorMessage.swift */,
+				AA000201000000000000006 /* InputEventMessage.swift */,
+				AA000201000000000000007 /* PairingMessage.swift */,
+			);
+			path = Protocol;
+			sourceTree = "<group>";
+		};
+		AA000401000000000000004 /* Transport */ = {
+			isa = PBXGroup;
+			children = (
+				AA000201000000000000008 /* AirBridgeChannel.swift */,
+				AA000201000000000000009 /* DiscoveryService.swift */,
+			);
+			path = Transport;
+			sourceTree = "<group>";
+		};
+		AA000401000000000000005 /* Pairing */ = {
+			isa = PBXGroup;
+			children = (
+				AA00020100000000000000A /* KeychainStore.swift */,
+				AA00020100000000000000B /* PairingService.swift */,
+			);
+			path = Pairing;
+			sourceTree = "<group>";
+		};
+		AA000401000000000000006 /* Mirror */ = {
+			isa = PBXGroup;
+			children = (
+				AA00020100000000000000C /* VideoDecoder.swift */,
+				AA00020100000000000000D /* TabletDisplaySession.swift */,
+			);
+			path = Mirror;
+			sourceTree = "<group>";
+		};
+		AA000401000000000000007 /* UI */ = {
+			isa = PBXGroup;
+			children = (
+				AA00020100000000000000E /* AppViewModel.swift */,
+				AA00020100000000000000F /* ContentView.swift */,
+				AA000201000000000000010 /* DeviceListView.swift */,
+				AA000201000000000000011 /* PairingView.swift */,
+				AA000201000000000000012 /* DisplayView.swift */,
+			);
+			path = UI;
+			sourceTree = "<group>";
+		};
+		AA000401000000000000009 /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+				AA000201000000000000020 /* Foundation.framework */,
+				AA000201000000000000021 /* Network.framework */,
+				AA000201000000000000022 /* Security.framework */,
+				AA000201000000000000023 /* AVFoundation.framework */,
+				AA000201000000000000024 /* VideoToolbox.framework */,
+				AA000201000000000000025 /* CoreMedia.framework */,
+				AA000201000000000000026 /* CoreVideo.framework */,
+				AA000201000000000000027 /* UIKit.framework */,
+				AA000201000000000000028 /* SwiftUI.framework */,
+				AA000201000000000000029 /* Combine.framework */,
+			);
+			name = Frameworks;
+			sourceTree = "<group>";
+		};
+		AA000401000000000000010 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				AA000201000000000000015 /* AirBridge.app */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		AA000501000000000000001 /* AirBridge */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = AA000701000000000000002 /* Build configuration list for PBXNativeTarget "AirBridge" */;
+			buildPhases = (
+				AA000601000000000000001 /* Sources */,
+				AA000301000000000000001 /* Frameworks */,
+				AA000601000000000000002 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = AirBridge;
+			productName = AirBridge;
+			productReference = AA000201000000000000015 /* AirBridge.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		AA000801000000000000001 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastSwiftUpdateCheck = 1540;
+				LastUpgradeCheck = 1540;
+				TargetAttributes = {
+					AA000501000000000000001 = {
+						CreatedOnToolsVersion = 15.4;
+					};
+				};
+			};
+			buildConfigurationList = AA000701000000000000001 /* Build configuration list for PBXProject "AirBridge" */;
+			compatibilityVersion = "Xcode 14.0";
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+			);
+			mainGroup = AA000401000000000000001 /* Root */;
+			productRefGroup = AA000401000000000000010 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				AA000501000000000000001 /* AirBridge */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		AA000601000000000000002 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				AA000101000000000000013 /* Assets.xcassets in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		AA000601000000000000001 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				AA000101000000000000001 /* AirBridgeApp.swift in Sources */,
+				AA000101000000000000002 /* MessageType.swift in Sources */,
+				AA000101000000000000003 /* ProtocolMessage.swift in Sources */,
+				AA000101000000000000004 /* HandshakeMessage.swift in Sources */,
+				AA000101000000000000005 /* MirrorMessage.swift in Sources */,
+				AA000101000000000000006 /* InputEventMessage.swift in Sources */,
+				AA000101000000000000007 /* PairingMessage.swift in Sources */,
+				AA000101000000000000008 /* AirBridgeChannel.swift in Sources */,
+				AA000101000000000000009 /* DiscoveryService.swift in Sources */,
+				AA00010100000000000000A /* KeychainStore.swift in Sources */,
+				AA00010100000000000000B /* PairingService.swift in Sources */,
+				AA00010100000000000000C /* VideoDecoder.swift in Sources */,
+				AA00010100000000000000D /* TabletDisplaySession.swift in Sources */,
+				AA00010100000000000000E /* AppViewModel.swift in Sources */,
+				AA00010100000000000000F /* ContentView.swift in Sources */,
+				AA000101000000000000010 /* DeviceListView.swift in Sources */,
+				AA000101000000000000011 /* PairingView.swift in Sources */,
+				AA000101000000000000012 /* DisplayView.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		AA000701000000000000003 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_CYCLE = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"DEBUG=1",
+					"$(inherited)",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				SDKROOT = iphoneos;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+			};
+			name = Debug;
+		};
+		AA000701000000000000004 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_CYCLE = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
+				MTL_FAST_MATH = YES;
+				SDKROOT = iphoneos;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				VALIDATE_PRODUCT = YES;
+			};
+			name = Release;
+		};
+		AA000701000000000000005 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = "";
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = AirBridge/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "com.airbridge.app.ios";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 2;
+			};
+			name = Debug;
+		};
+		AA000701000000000000006 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = "";
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = AirBridge/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "com.airbridge.app.ios";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 2;
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		AA000701000000000000001 /* Build configuration list for PBXProject "AirBridge" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				AA000701000000000000003 /* Debug */,
+				AA000701000000000000004 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		AA000701000000000000002 /* Build configuration list for PBXNativeTarget "AirBridge" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				AA000701000000000000005 /* Debug */,
+				AA000701000000000000006 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+
+	};
+	rootObject = AA000801000000000000001 /* Project object */;
+}
