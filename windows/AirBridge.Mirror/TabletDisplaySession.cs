@@ -184,6 +184,20 @@ public sealed class TabletDisplaySession : IMirrorSession
     public Task SendInputAsync(InputEventArgs inputEvent, CancellationToken cancellationToken = default)
         => Task.CompletedTask;
 
+    /// <summary>
+    /// Returns a handler to register with DeviceConnectionService so inbound MIRROR_STOP
+    /// messages from the tablet are forwarded here without a concurrent SslStream read.
+    /// </summary>
+    public Func<ProtocolMessage, Task> CreateMessageHandler(Func<Task>? onStop = null) =>
+        async msg =>
+        {
+            if (msg.Type == MessageType.MirrorStop)
+            {
+                await StopAsync().ConfigureAwait(false);
+                if (onStop is not null) await onStop().ConfigureAwait(false);
+            }
+        };
+
     // ── Frame pump ────────────────────────────────────────────────────────
 
     /// <summary>

@@ -41,6 +41,7 @@ public sealed class LoopbackChannelPair
         ChannelWriter<ProtocolMessage> outbox) : IMessageChannel
     {
         public string RemoteDeviceId { get; } = remoteDeviceId;
+        public string RemoteDeviceType { get; } = string.Empty;
         public bool IsConnected => !_closed;
         private bool _closed;
 

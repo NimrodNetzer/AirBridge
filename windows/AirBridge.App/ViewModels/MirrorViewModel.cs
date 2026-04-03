@@ -63,13 +63,15 @@ public sealed partial class MirrorViewModel : ObservableObject, IDisposable
     }
 
     private void OnDeviceConnected(object? sender, string deviceId)
-        => _dispatcher.TryEnqueue(async () =>
+    {
+        _dispatcher.TryEnqueue(() => ActivateDevice(deviceId));
+        // iPad connects as receiver — auto-start tablet display so it gets the stream immediately.
+        _dispatcher.TryEnqueue(async () =>
         {
-            ActivateDevice(deviceId);
-            // iPad connects as receiver — auto-start tablet display so it gets the stream immediately.
             if (_connectedDevice?.DeviceType == DeviceType.iPad && !IsMirroring)
                 await StartSessionAsync(MirrorMode.TabletDisplay);
         });
+    }
 
     private void OnAndroidMirrorStartRequested(object? sender, AirBridge.App.Services.AndroidMirrorStartArgs args)
         => _dispatcher.TryEnqueue(async () =>
