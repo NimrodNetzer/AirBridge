@@ -94,7 +94,7 @@ struct DisplayView: UIViewRepresentable {
 
     // MARK: - Coordinator
 
-    final class Coordinator: NSObject {
+    @MainActor final class Coordinator: NSObject {
         let session: TabletDisplaySession
         var hostView: DisplayHostView?
         private var cancellable: AnyCancellable?

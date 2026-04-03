@@ -121,7 +121,7 @@ extension Data {
 
     func readInt32BE(at offset: Int) -> Int32 {
         var value: Int32 = 0
-        withUnsafeMutableBytes(of: &value) { dst in
+        withUnsafeMutableBytes(of: &value) { (dst: UnsafeMutableRawBufferPointer) in
             dst.copyBytes(from: self[offset..<(offset + 4)])
         }
         return Int32(bigEndian: value)
@@ -129,7 +129,7 @@ extension Data {
 
     func readInt64BE(at offset: Int) -> Int64 {
         var value: Int64 = 0
-        withUnsafeMutableBytes(of: &value) { dst in
+        withUnsafeMutableBytes(of: &value) { (dst: UnsafeMutableRawBufferPointer) in
             dst.copyBytes(from: self[offset..<(offset + 8)])
         }
         return Int64(bigEndian: value)
