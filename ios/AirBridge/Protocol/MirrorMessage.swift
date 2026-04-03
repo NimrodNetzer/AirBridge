@@ -128,11 +128,11 @@ extension Data {
 
     func readInt64BE(at offset: Int) -> Int64 {
         let b = self
-        let v = (Int64(b[offset])   << 56) | (Int64(b[offset+1]) << 48)
-              | (Int64(b[offset+2]) << 40) | (Int64(b[offset+3]) << 32)
-              | (Int64(b[offset+4]) << 24) | (Int64(b[offset+5]) << 16)
-              | (Int64(b[offset+6]) <<  8) |  Int64(b[offset+7])
-        return v
+        let hi: Int64 = (Int64(b[offset]) << 56) | (Int64(b[offset+1]) << 48)
+                      | (Int64(b[offset+2]) << 40) | (Int64(b[offset+3]) << 32)
+        let lo: Int64 = (Int64(b[offset+4]) << 24) | (Int64(b[offset+5]) << 16)
+                      | (Int64(b[offset+6]) << 8)  |  Int64(b[offset+7])
+        return hi | lo
     }
 }
 
