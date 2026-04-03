@@ -91,15 +91,16 @@ final class VideoDecoder {
 
         // Create CMBlockBuffer
         var blockBuffer: CMBlockBuffer?
+        let blockLength = blockData.count
         var status = blockData.withUnsafeMutableBytes { ptr -> OSStatus in
             CMBlockBufferCreateWithMemoryBlock(
                 allocator: nil,
                 memoryBlock: ptr.baseAddress,
-                blockLength: blockData.count,
+                blockLength: blockLength,
                 blockAllocator: kCFAllocatorNull,
                 customBlockSource: nil,
                 offsetToData: 0,
-                dataLength: blockData.count,
+                dataLength: blockLength,
                 flags: 0,
                 blockBufferOut: &blockBuffer
             )
