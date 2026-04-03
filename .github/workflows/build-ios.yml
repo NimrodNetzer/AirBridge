@@ -1,0 +1,40 @@
+name: Build iOS
+on:
+  push:
+    branches: ['feature/ipad-display', 'dev', 'main']
+    paths: ['ios/**']
+  pull_request:
+    paths: ['ios/**']
+
+jobs:
+  build:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - name: Select Xcode
+        run: sudo xcode-select -s /Applications/Xcode_15.4.app
+      - name: Build (no signing)
+        run: |
+          xcodebuild \
+            -project ios/AirBridge.xcodeproj \
+            -scheme AirBridge \
+            -destination 'platform=iOS Simulator,name=iPad Pro 13-inch (M4)' \
+            -configuration Debug \
+            CODE_SIGNING_ALLOWED=NO \
+            build
+      - name: Archive for sideloading
+        if: github.ref == 'refs/heads/dev' || github.ref == 'refs/heads/main'
+        run: |
+          xcodebuild \
+            -project ios/AirBridge.xcodeproj \
+            -scheme AirBridge \
+            -archivePath build/AirBridge.xcarchive \
+            -configuration Release \
+            CODE_SIGNING_ALLOWED=NO \
+            archive
+      - name: Upload IPA artifact
+        if: github.ref == 'refs/heads/dev' || github.ref == 'refs/heads/main'
+        uses: actions/upload-artifact@v4
+        with:
+          name: AirBridge-iOS
+          path: build/AirBridge.xcarchive

@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleIdentifier</key>
+    <string>com.airbridge.app.ios</string>
+    <key>CFBundleName</key>
+    <string>AirBridge</string>
+    <key>CFBundleVersion</key>
+    <string>1</string>
+    <key>CFBundleShortVersionString</key>
+    <string>1.0</string>
+    <key>UILaunchStoryboardName</key>
+    <string>LaunchScreen</string>
+    <key>UIRequiresFullScreen</key>
+    <true/>
+    <key>NSBonjourServices</key>
+    <array>
+        <string>_airbridge._tcp</string>
+    </array>
+    <key>NSLocalNetworkUsageDescription</key>
+    <string>AirBridge connects to your Windows PC over Wi-Fi to extend your display wirelessly.</string>
+    <key>UIDeviceFamily</key>
+    <array><integer>2</integer></array>
+    <key>UISupportedInterfaceOrientations~ipad</key>
+    <array>
+        <string>UIInterfaceOrientationLandscapeLeft</string>
+        <string>UIInterfaceOrientationLandscapeRight</string>
+        <string>UIInterfaceOrientationPortrait</string>
+        <string>UIInterfaceOrientationPortraitUpsideDown</string>
+    </array>
+</dict>
+</plist>
